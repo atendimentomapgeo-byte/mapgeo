@@ -442,6 +442,18 @@ details.layer-group .layer-group-body{padding:2px 13px 12px;border-top:1px solid
    quebra a página bem entre o título e a imagem (ou empurra a imagem inteira pra página seguinte mesmo
    sobrando bastante espaço), deixando a primeira folha com uma área em branco grande */
 .report-page .mapa-bloco{break-inside:avoid;page-break-inside:avoid;}
+/* gráfico de composição ambiental do relatório — mesmo padrão visual das barras do Diagnóstico CAR
+   (comp-row/comp-track/comp-fill), mas com classes e cores próprias, fixas em claro/escuro, porque o
+   relatório é impresso sobre fundo branco e as variáveis --text-*/--bg-2 do tema escuro do app não dão
+   contraste legível ali. */
+.report-page .rchart{margin:10px 0 4px;}
+.report-page .rchart-row{display:flex;align-items:center;gap:10px;padding:5px 0;break-inside:avoid;page-break-inside:avoid;}
+.report-page .rchart-label{flex:0 0 170px;font-size:11.5px;color:#333;}
+.report-page .rchart-track{flex:1 1 auto;height:13px;background:#eee;border-radius:5px;overflow:hidden;border:1px solid #ccc;}
+.report-page .rchart-fill{height:100%;border-radius:5px 0 0 5px;min-width:2px;}
+.report-page .rchart-value{flex:0 0 auto;font-family:var(--mono);font-size:11px;color:#111;white-space:nowrap;min-width:112px;text-align:right;}
+.report-page .rchart-value .rchart-ha{color:#777;}
+.report-page .rchart-note{font-size:10.5px;color:#666;margin:2px 0 12px;}
 
 </style>
 </head>
@@ -3351,36 +3363,113 @@ async function gerarRelatorio(){
 
   // "Limites Municipais" não é sobreposição/restrição — fica fora das tabelas fundiário/ambiental
   // (mostrado à parte, na Identificação, como "Localização").
-  const fundiarioRowsFull = overlapResults.filter(r=>r.group==='fundiario');
-  const ambientalRowsFull = overlapResults.filter(r=>r.group==='ambiental' && r.connectorId!=='sema_lim_municipios_mt');
   const municipioRows = overlapResults.filter(r=>r.connectorId==='sema_lim_municipios_mt');
-  const fundiarioRows = reportMode==='resumido' ? aggregateByConnector(fundiarioRowsFull) : fundiarioRowsFull;
-  const ambientalRows = reportMode==='resumido' ? aggregateByConnector(ambientalRowsFull) : ambientalRowsFull;
-  // usado no restante do gerador (alertas etc.) — junta os dois grupos já no nível certo de agregação
-  const overlapResultsForReport = reportMode==='resumido' ? [...fundiarioRows, ...ambientalRows] : [...fundiarioRowsFull, ...ambientalRowsFull];
-
-  const fundiarioTable = fundiarioRows.length
-    ? (reportMode==='resumido'
-        ? fundiarioRows.map(r=>`<tr><td>${escapeHtml(r.connectorName)}</td><td>${escapeHtml(r.codes.join(', ')||'—')}</td><td>${r.featureCount}</td><td>${fmt(r.areaHa,3)} ha</td><td>${fmt(r.pct,2)}%</td><td>${escapeHtml(r.classification.label)}</td></tr>`).join('')
-        : fundiarioRows.map(r=>`<tr><td>${escapeHtml(r.connectorName)}</td><td>${escapeHtml(r.featureName)}</td><td>${fmt(r.areaHa,3)} ha</td><td>${fmt(r.pct,2)}%</td><td>${escapeHtml(r.classification.label)}</td></tr>`).join(''))
-    : `<tr><td colspan="6">Nenhuma camada fundiária consultada nesta sessão — rode "▶ Rodar Análise" antes de gerar o relatório.</td></tr>`;
-
-  const ambientalTable = ambientalRows.length
-    ? (reportMode==='resumido'
-        ? ambientalRows.map(r=>`<tr><td>${escapeHtml(r.connectorName)}</td><td>${r.featureCount}</td><td>${fmt(r.areaHa,3)} ha</td><td>${fmt(r.pct,2)}%</td><td>${escapeHtml(r.classification.label)}</td></tr>`).join('')
-        : ambientalRows.map(r=>`<tr><td>${escapeHtml(r.connectorName)}</td><td>${escapeHtml(r.featureName)}</td><td>${fmt(r.areaHa,3)} ha</td><td>${fmt(r.pct,2)}%</td><td>${escapeHtml(r.classification.label)}</td></tr>`).join(''))
-    : `<tr><td colspan="5">Nenhuma camada ambiental consultada nesta sessão — rode "▶ Rodar Análise" antes de gerar o relatório.</td></tr>`;
+  // usado no restante do gerador (alertas etc.) — todas as camadas de restrição, já no nível certo de
+  // agregação (a divisão em seções abaixo é só de exibição; a lista de alertas continua olhando tudo).
+  const overlapResultsForReport = reportMode==='resumido'
+    ? aggregateByConnector(overlapResults.filter(r=>r.connectorId!=='sema_lim_municipios_mt'))
+    : overlapResults.filter(r=>r.connectorId!=='sema_lim_municipios_mt');
 
   const municipioSemaLabel = municipioRows.length
     ? municipioRows.map(r=>escapeHtml(r.featureName)).join(', ')
     : 'não consultado nesta sessão';
 
-  const fundiarioHeaderCols = reportMode==='resumido'
-    ? '<tr><th>Base</th><th>Código(s)</th><th>Nº de feições</th><th>Área total</th><th>%</th><th>Classificação</th></tr>'
-    : '<tr><th>Base</th><th>Feição / Código</th><th>Área</th><th>%</th><th>Classificação</th></tr>';
-  const ambientalHeaderCols = reportMode==='resumido'
-    ? '<tr><th>Camada</th><th>Nº de feições</th><th>Área total</th><th>%</th><th>Classificação</th></tr>'
-    : '<tr><th>Camada</th><th>Feição</th><th>Área</th><th>%</th><th>Classificação</th></tr>';
+  // Agrupamento do relatório definido pelo usuário — cada seção lista os conectores que entram nela, na
+  // ordem em que devem aparecer. "hasCodes" liga a coluna extra de código(s) da parcela/matrícula (faz
+  // sentido pro fundiário — SIGEF/SNCI/parcela — não pro resto).
+  const SECOES_RELATORIO = [
+    { titulo:'Ambiental', hasCodes:false, ids:['sema_mvw_requerimento_atp','sema_car_atp','sema_uso_consolidado','sema_simcar_car_area_consolidada','sema_unidades_conservacao','sema_vegetacao_radambrasil'] },
+    { titulo:'Autorizações', hasCodes:false, ids:['sema_mvw_apf_geometria_regular','sema_autex_pmfs_sema','sema_aqc','sema_autorizacao_exploracao_sema','sema_autorizacao_desmate_sema'] },
+    { titulo:'Embargos', hasCodes:false, ids:['sema_area_embargada_siga_poligono','sema_areas_embargadas_sema','ibama_embargos'] },
+    { titulo:'Desembargo', hasCodes:false, ids:['sema_areas_desembargadas_siga_poligono','sema_areas_desembargadas_sema'] },
+    { titulo:'Prodes/DETER', hasCodes:false, ids:['inpe_deter_amz','inpe_deter_cerrado'] },
+    { titulo:'Fundiário — INCRA', hasCodes:true, ids:['incra_sigef_part','incra_sigef_pub','incra_snci_privado','incra_snci_publico','incra_parcelageo','incra_assentamentos','incra_quilombolas'] },
+    { titulo:'Fundiário — INTERMAT', hasCodes:true, ids:['intermat_ti','intermat_assentamento','intermat_loteamento'] },
+  ];
+  // ATP/AVN/ARL/Uso Consolidado/AUAS/APP não fazem parte do agrupamento acima — só compõem o gráfico
+  // "Composição Ambiental do Imóvel" (ids usados diretamente via sumGroup logo abaixo). A pedido do
+  // usuário, viram uma seção própria logo abaixo do mapa, separada das demais, em formato de gráfico de
+  // barras em vez de tabela, na ordem ATP → AVN → ARL (por fitoecologia quando disponível) → Uso
+  // Consolidado → AUAS → APP. ARLD e Desmatamento (2018) ficaram de fora deste gráfico a pedido do
+  // usuário — não aparecem em nenhuma tabela de seção (nunca apareceram: não fazem parte de
+  // SECOES_RELATORIO), mas continuam gerando alerta normalmente em "Alertas da Propriedade" quando
+  // houver área identificada, porque essa seção lê overlapResultsForReport (todas as camadas), não
+  // as listas usadas pelo gráfico ou pelas tabelas.
+
+  function renderSecaoRelatorio(ids, hasCodes){
+    const rowsFull = overlapResults.filter(r=> ids.includes(r.connectorId));
+    const rows = reportMode==='resumido' ? aggregateByConnector(rowsFull) : rowsFull;
+    const colspan = hasCodes ? 6 : 5;
+    const headerCols = reportMode==='resumido'
+      ? (hasCodes
+          ? '<tr><th>Base</th><th>Código(s)</th><th>Nº de feições</th><th>Área total</th><th>%</th><th>Classificação</th></tr>'
+          : '<tr><th>Camada</th><th>Nº de feições</th><th>Área total</th><th>%</th><th>Classificação</th></tr>')
+      : (hasCodes
+          ? '<tr><th>Base</th><th>Feição / Código</th><th>Área</th><th>%</th><th>Classificação</th></tr>'
+          : '<tr><th>Camada</th><th>Feição</th><th>Área</th><th>%</th><th>Classificação</th></tr>');
+    let bodyRows;
+    if(rows.length){
+      bodyRows = reportMode==='resumido'
+        ? rows.map(r=> hasCodes
+            ? `<tr><td>${escapeHtml(r.connectorName)}</td><td>${escapeHtml(r.codes.join(', ')||'—')}</td><td>${r.featureCount}</td><td>${fmt(r.areaHa,3)} ha</td><td>${fmt(r.pct,2)}%</td><td>${escapeHtml(r.classification.label)}</td></tr>`
+            : `<tr><td>${escapeHtml(r.connectorName)}</td><td>${r.featureCount}</td><td>${fmt(r.areaHa,3)} ha</td><td>${fmt(r.pct,2)}%</td><td>${escapeHtml(r.classification.label)}</td></tr>`
+          ).join('')
+        : rows.map(r=>`<tr><td>${escapeHtml(r.connectorName)}</td><td>${escapeHtml(r.featureName)}</td><td>${fmt(r.areaHa,3)} ha</td><td>${fmt(r.pct,2)}%</td><td>${escapeHtml(r.classification.label)}</td></tr>`).join('');
+    } else {
+      bodyRows = overlapResults.length===0
+        ? `<tr><td colspan="${colspan}">Nenhuma camada consultada nesta sessão — rode "▶ Rodar Análise" antes de gerar o relatório.</td></tr>`
+        : `<tr><td colspan="${colspan}">Nenhuma sobreposição encontrada nesta seção.</td></tr>`;
+    }
+    return `<table>${headerCols}${bodyRows}</table>`;
+  }
+
+  const secoesResultadosHtml = SECOES_RELATORIO.map(s=> `<h3>${escapeHtml(s.titulo)}</h3>\n${renderSecaoRelatorio(s.ids, s.hasCodes)}`).join('\n\n');
+
+  // Composição Ambiental do Imóvel — mesmo grupo de camadas de antes (IDS_COMPOSICAO_AMBIENTAL), mas agora
+  // como gráfico de barras em vez de tabela, no mesmo estilo visual do "Diagnóstico CAR" (compBar/sumGroup,
+  // ambos já definidos fora desta função). "rBar" é uma versão com classes próprias (rchart-*), coloridas
+  // pra contraste em fundo branco, já que o relatório é impresso/exportado sobre fundo claro.
+  function rBar(label, data, color){
+    const w = Math.min(data.pct, 100);
+    return `<div class="rchart-row">
+        <div class="rchart-label">${escapeHtml(label)}</div>
+        <div class="rchart-track"><div class="rchart-fill" style="width:${w}%;background:${color};"></div></div>
+        <div class="rchart-value">${fmt(data.pct,1)}% <span class="rchart-ha">(${fmt(data.totalHa,1)} ha)</span></div>
+      </div>`;
+  }
+  let composicaoAmbientalHtml = `<h3>Composição Ambiental do Imóvel</h3>\n`;
+  if(overlapResults.length===0){
+    composicaoAmbientalHtml += `<div class="notice">Nenhuma camada consultada nesta sessão — rode "▶ Rodar Análise" antes de gerar o relatório.</div>`;
+  } else {
+    // Reserva Legal (ARL), assim como no Diagnóstico CAR: se a camada Radam Brasil foi consultada nesta
+    // sessão, a barra única de ARL vira uma barra por fitoecologia (Floresta × Cerrado × ...), em vez de
+    // um total genérico — mesma lógica de splitAreaByBiome/arlByBiomeColors usada lá.
+    const arlResultsRel = overlapResults.filter(r=> r.connectorId==='sema_car_arl');
+    const arlByBiomeRel = splitAreaByBiome(arlResultsRel);
+    const arlByBiomeColorsRel = ['#5a9fd4','#4a7fb0','#3d6d9c','#6badd8','#2f5c85'];
+    let arlBarsHtml = '';
+    if(arlByBiomeRel && Object.keys(arlByBiomeRel).length){
+      Object.entries(arlByBiomeRel).forEach(([nome, ha], i)=>{
+        const pct = state.areaHa ? (ha/state.areaHa)*100 : 0;
+        arlBarsHtml += rBar(`Reserva Legal — ${nome}`, {pct, totalHa:ha}, arlByBiomeColorsRel[i % arlByBiomeColorsRel.length]);
+      });
+    } else {
+      arlBarsHtml += rBar('Reserva Legal (ARL)', sumGroup(['sema_car_arl']), '#5a9fd4');
+    }
+
+    composicaoAmbientalHtml += `<div class="rchart">`
+      + rBar('Área Total da Propriedade (ATP)', sumGroup(['sema_car_atp']), '#8a8fa3')
+      + rBar('Vegetação Nativa (AVN)', sumGroup(['sema_car_avn']), '#4caf78')
+      + arlBarsHtml
+      + rBar('Uso Consolidado (AC)', sumGroup(['sema_uso_consolidado']), '#c77b4a')
+      + rBar('Uso Antropizado (AUAS)', sumGroup(['sema_car_auas']), '#e0a940')
+      + rBar('Preservação Permanente (APP)', sumGroup(['sema_car_app']), '#8e7cd6')
+      + `</div>`;
+    if(arlByBiomeRel === null){
+      composicaoAmbientalHtml += `<div class="rchart-note">Reserva Legal (ARL) aparece como total único, sem separar por fitoecologia — rode "▶ Rodar Análise" (a camada Radam Brasil faz parte da rodada automática) para separar Floresta × Cerrado × outras classes.</div>`;
+    }
+    composicaoAmbientalHtml += `<div class="rchart-note">Percentuais calculados separadamente sobre a área total do imóvel — como as bases se sobrepõem entre si (ex.: APP pode estar dentro da Reserva Legal), a soma pode passar de 100% ou não fechar exatamente a área total.</div>`;
+  }
 
   // Alertas — mesmo critério de classificação usado no motor de sobreposição (seção 12 do briefing original)
   const critAlerts = overlapResultsForReport.filter(r=>r.classification.cls==='crit');
@@ -3430,6 +3519,8 @@ async function gerarRelatorio(){
         ? `<div class="mapa-bloco"><h3>Mapa</h3><img src="${mapImg}"></div>`
         : (mapCaptureAviso ? `<div class="mapa-bloco"><h3>Mapa</h3><div class="notice">⚠️ ${escapeHtml(mapCaptureAviso)}</div></div>` : '')}
 
+      ${composicaoAmbientalHtml}
+
       <h3>Identificação</h3>
       <table>
         <tr><td>Proprietário</td><td>${escapeHtml(state.proprietario||'—')}</td></tr>
@@ -3447,15 +3538,7 @@ async function gerarRelatorio(){
       <h3>Alertas da Propriedade</h3>
       ${alertsHtml}
 
-      <h3>Resultados fundiários</h3>
-      <table>${fundiarioHeaderCols}
-        ${fundiarioTable}
-      </table>
-
-      <h3>Resultados ambientais</h3>
-      <table>${ambientalHeaderCols}
-        ${ambientalTable}
-      </table>
+      ${secoesResultadosHtml}
 
       <h3>Fontes consultadas</h3>
       <table><tr><th>Base</th><th>Data</th><th>Status</th></tr>
