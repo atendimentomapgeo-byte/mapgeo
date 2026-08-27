@@ -170,7 +170,7 @@ button.small{padding:5px 10px;font-size:11.5px;}
 .basemap-row{display:flex;flex-direction:row;gap:4px;margin-top:0;}
 .basemap-row button{text-align:center;font-size:11px;padding:5px 9px;white-space:nowrap;}
 .basemap-row button.active{border-color:var(--accent);color:var(--accent);background:rgba(56,208,187,.08);}
-/* seletor de ano/data que aparece só quando Sentinel-2 (ano) ou Esri Wayback (data) está ativo */
+/* seletor de ano que aparece só quando Sentinel-2 (ano) ou Landsat (1984+) está ativo */
 .basemap-historical{display:flex;align-items:center;gap:6px;width:100%;justify-content:flex-end;}
 .basemap-historical select{
   font-size:11px;padding:4px 7px;border-radius:var(--radius-sm);border:1px solid var(--line);
@@ -509,6 +509,7 @@ details.layer-group .layer-group-body{padding:2px 13px 12px;border-top:1px solid
       <button id="tool-measure-dist" title="Medir distância">📏</button>
       <button id="tool-measure-area" title="Medir área">▱</button>
       <button id="tool-fit" title="Enquadrar imóvel">🎯</button>
+      <button id="tool-toggle-layers" title="Ocultar camadas consultadas (deixa só o contorno do imóvel)">👁</button>
       <button id="tool-clear-measure" title="Limpar medições">🧹</button>
     </div>
 
@@ -751,64 +752,6 @@ btnSentinel2.onclick = ()=>{
   activateBaseLayer(criaCamadaSentinel2(SENTINEL2_ANOS[0]), `Sentinel-2 ${SENTINEL2_ANOS[0]}`, btnSentinel2);
 };
 basemapRow.appendChild(btnSentinel2);
-
-// ---------- Esri World Imagery Wayback — datas específicas desde fev/2014, gratuito, sem chave ----------
-let waybackReleasesCache = null; // [{data:'AAAA-MM-DD', url}], carregado uma vez por sessão, mais recente primeiro
-async function carregaWaybackReleases(){
-  if(waybackReleasesCache) return waybackReleasesCache;
-  const resp = await fetch('https://s3-us-west-2.amazonaws.com/config.maptiles.arcgis.com/waybackconfig.json');
-  if(!resp.ok) throw new Error('waybackconfig.json: HTTP ' + resp.status);
-  const dados = await resp.json();
-  waybackReleasesCache = Object.values(dados)
-    .map(r=>{
-      const m = /(\d{4}-\d{2}-\d{2})/.exec(r.itemTitle || '');
-      return { data: m ? m[1] : '', url: r.itemURL };
-    })
-    .filter(r=> r.data && r.url)
-    .sort((a,b)=> b.data.localeCompare(a.data)); // mais recente primeiro
-  return waybackReleasesCache;
-}
-function criaCamadaWayback(urlTemplate){
-  return L.tileLayer(urlTemplate, {
-    attribution:'Esri World Imagery Wayback — Esri, Maxar, Earthstar Geographics',
-    maxZoom:19
-  });
-}
-
-const btnWayback = document.createElement('button');
-btnWayback.className = 'small';
-btnWayback.textContent = 'Esri Wayback (data)';
-btnWayback.title = 'Imagem de satélite por data específica desde fev/2014 — Esri World Imagery Wayback (mesma fonte do "Satélite (Esri)" atual, resolução mais alta)';
-btnWayback.onclick = async ()=>{
-  basemapHistorical.style.display = 'flex';
-  selectHistoricalDate.style.display = 'none';
-  historicalLoading.style.display = '';
-  historicalLoading.textContent = 'Carregando datas…';
-  let releases;
-  try{
-    releases = await carregaWaybackReleases();
-  }catch(e){
-    historicalLoading.textContent = 'Não consegui carregar a lista de datas (falha de rede) — clique de novo pra tentar.';
-    return;
-  }
-  historicalLoading.style.display = 'none';
-  selectHistoricalDate.style.display = '';
-  selectHistoricalDate.innerHTML = '';
-  releases.forEach(r=>{
-    const opt = document.createElement('option');
-    opt.value = r.url;
-    opt.textContent = r.data.split('-').reverse().join('/'); // AAAA-MM-DD -> DD/MM/AAAA
-    selectHistoricalDate.appendChild(opt);
-  });
-  selectHistoricalDate.onchange = ()=>{
-    const dataLabel = selectHistoricalDate.options[selectHistoricalDate.selectedIndex].textContent;
-    activateBaseLayer(criaCamadaWayback(selectHistoricalDate.value), `Esri Wayback ${dataLabel}`, btnWayback);
-  };
-  if(releases.length){
-    activateBaseLayer(criaCamadaWayback(releases[0].url), `Esri Wayback ${selectHistoricalDate.options[0].textContent}`, btnWayback);
-  }
-};
-basemapRow.appendChild(btnWayback);
 
 // ---------- Landsat 1984+ via Google Earth Engine — requer login Google (uso pessoal/não comercial) ----------
 // Client ID OAuth criado no Google Cloud (projeto registrado no Earth Engine para uso não comercial).
@@ -1469,6 +1412,8 @@ function cacheClear(connectorId, feature){
 const connectorLayers = {}; // id -> Leaflet layerGroup
 let overlapResults = [];    // resultado da última consulta agregada
 let overlapThreshold = 10;
+let camadasVisiveis = true; // controla o botão "👁" da barra de ferramentas — oculta as ~35 camadas consultadas,
+                             // deixando só o contorno do imóvel (propertyGroup) visível por cima do satélite
 
 /* Lista de camadas simplificada a pedido do usuário (26/08/2026) — reduzida de 156 para 35 conectores,
    mantendo só o que é usado no cruzamento de dados pedido + as camadas centrais que já alimentam o
@@ -1736,14 +1681,18 @@ function removerCamada(connectorId){
 function displayLayerOnMap(connector, fc){
   if(connectorLayers[connector.id]) map.removeLayer(connectorLayers[connector.id]);
   const color = connector.group === 'fundiario' ? '#e0a940' : '#8e7cd6';
-  connectorLayers[connector.id] = L.geoJSON(fc, {
+  const layer = L.geoJSON(fc, {
     style:{ color, weight:1.5, fillColor:color, fillOpacity:.12, dashArray: connector.status==='mock' ? '4,3' : null },
-    onEachFeature:(feature, layer)=>{
-      layer.bindPopup(()=> buildFeaturePopupHtml(connector, feature), { maxWidth:320, maxHeight:280 });
-      layer.on('mouseover', ()=> layer.setStyle({ weight:3, fillOpacity:.28 }));
-      layer.on('mouseout', ()=> connectorLayers[connector.id].resetStyle(layer));
+    onEachFeature:(feature, lyr)=>{
+      lyr.bindPopup(()=> buildFeaturePopupHtml(connector, feature), { maxWidth:320, maxHeight:280 });
+      lyr.on('mouseover', ()=> lyr.setStyle({ weight:3, fillOpacity:.28 }));
+      lyr.on('mouseout', ()=> connectorLayers[connector.id].resetStyle(lyr));
     }
-  }).addTo(map);
+  });
+  connectorLayers[connector.id] = layer;
+  // respeita o botão "👁" da barra de ferramentas: se as camadas estiverem ocultas no momento, a camada
+  // recém-consultada fica pronta em connectorLayers mas não entra no mapa até o usuário mostrar de novo
+  if(camadasVisiveis) layer.addTo(map);
 }
 
 function buildFeaturePopupHtml(connector, feature){
@@ -3009,6 +2958,19 @@ document.getElementById('tool-measure-area').addEventListener('click', ()=>{
   toast('Clique no mapa para desenhar uma área. Clique no botão novamente para encerrar.');
 });
 document.getElementById('tool-clear-measure').addEventListener('click', resetMeasure);
+document.getElementById('tool-toggle-layers').addEventListener('click', ()=>{
+  camadasVisiveis = !camadasVisiveis;
+  Object.values(connectorLayers).forEach(layer=>{
+    if(camadasVisiveis) layer.addTo(map); else map.removeLayer(layer);
+  });
+  const btn = document.getElementById('tool-toggle-layers');
+  btn.textContent = camadasVisiveis ? '👁' : '🙈';
+  btn.classList.toggle('active', !camadasVisiveis);
+  btn.title = camadasVisiveis
+    ? 'Ocultar camadas consultadas (deixa só o contorno do imóvel)'
+    : 'Mostrar camadas consultadas de novo';
+  toast(camadasVisiveis ? 'Camadas consultadas visíveis de novo.' : 'Camadas consultadas ocultas — só o contorno do imóvel ficou visível.');
+});
 document.getElementById('tool-fit').addEventListener('click', ()=>{
   if(state.layer) map.fitBounds(state.layer.getBounds(), {padding:[40,40]});
   else toast('Nenhum imóvel carregado ainda.');
