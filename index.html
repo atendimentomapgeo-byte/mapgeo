@@ -96,7 +96,7 @@ header{
   position:relative;
   z-index:1000;
 }
-.brand{display:flex;align-items:baseline;gap:12px;}
+.brand{display:flex;align-items:center;gap:12px;min-width:0;}
 .brand .mark{
   font-family:var(--mono);
   font-weight:600;
@@ -110,7 +110,13 @@ header{
   box-shadow:inset 0 1px 0 rgba(255,255,255,.04);
 }
 .brand h1{font-size:14.5px;font-weight:600;margin:0;color:var(--text-0);letter-spacing:.1px;}
-.brand .phase{font-size:11px;color:var(--text-2);font-family:var(--mono);padding-left:2px;border-left:1px solid var(--line);padding-left:12px;}
+.brand .phase{
+  display:flex;flex-direction:column;justify-content:center;gap:1px;
+  font-size:11px;color:var(--text-2);font-family:var(--mono);line-height:1.35;
+  padding-left:12px;border-left:1px solid var(--line);min-width:0;max-width:420px;
+}
+.brand .phase span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.brand .phase .phase-l1{color:var(--text-1);}
 .header-actions{display:flex;gap:9px;align-items:center;}
 .header-actions .status-dot{width:7px;height:7px;border-radius:50%;background:var(--text-2);box-shadow:0 0 0 3px rgba(109,125,141,.12);transition:background .2s,box-shadow .2s;}
 .header-actions .status-dot.ok{background:var(--green);box-shadow:0 0 0 4px rgba(75,196,138,.18);animation:pulseDot 2.4s ease-in-out infinite;}
@@ -441,7 +447,7 @@ details.layer-group .layer-group-body{padding:2px 13px 12px;border-top:1px solid
   <div class="brand">
     <span class="mark">MapGEO</span>
     <h1>Consulta Fundiária e Ambiental</h1>
-    <span class="phase">Fase 1–3 — cruzamento fundiário automatizado</span>
+    <span class="phase" id="header-phase" style="display:none;"></span>
   </div>
   <div class="header-actions">
     <span class="status-dot" id="status-dot"></span>
@@ -558,6 +564,10 @@ details.layer-group .layer-group-body{padding:2px 13px 12px;border-top:1px solid
             <label>Matrícula</label>
             <input type="text" id="input-matricula" placeholder="Nº da matrícula">
           </div>
+          <div class="field">
+            <label>Número do CAR</label>
+            <input type="text" id="input-numero-car" placeholder="Ex.: MT99077/2017">
+          </div>
 
           <div class="metric-grid">
             <div class="metric"><div class="v" id="m-area">—</div><div class="l">Área (ha)</div></div>
@@ -656,7 +666,8 @@ const state = {
   importedAt: null,
   nome: '',
   proprietario: '',
-  matricula: ''
+  matricula: '',
+  numeroCar: ''
 };
 
 const IBGE_UF_CODE = 51; // Mato Grosso
@@ -1126,10 +1137,17 @@ async function loadProperty(feature, sourceFormat, filename){
     .find(v=> v && String(v).trim().length);
   const matricula = [importProps.matricula, importProps.MATRICULA, importProps.Matricula]
     .find(v=> v && String(v).trim().length);
+  // nº do CAR: NUMEROESTADUAL/CAR_FEDERAL vêm das buscas por CAR (base CAR_ATP da SEMA-MT — ver
+  // searchCarAtpByNumero); os demais candidatos cobrem outras grafias que camadas/arquivos importados
+  // possam usar para o mesmo dado.
+  const numeroCar = [importProps.NUMEROESTADUAL, importProps.CAR_FEDERAL, importProps.numero_car,
+    importProps.NUMERO_CAR, importProps.NumeroCar, importProps.codigo_car, importProps.COD_CAR]
+    .find(v=> v && String(v).trim().length);
 
   state.nome = nomePropriedade ? String(nomePropriedade).trim() : filename.replace(/\.[^/.]+$/, '');
   state.proprietario = nomeProprietarios ? String(nomeProprietarios).trim() : '';
   state.matricula = matricula ? String(matricula).trim() : '';
+  state.numeroCar = numeroCar ? String(numeroCar).trim() : '';
 
   state.areaHa = turf.area(feature) / 10000;
   state.perimetroKm = calcPerimeterKm(feature);
@@ -1193,10 +1211,32 @@ function renderPropertyOnMap(feature){
   map.fitBounds(layer.getBounds(), { padding:[40,40] });
 }
 
+// mostra nome do imóvel + CAR (linha 1) e proprietário (linha 2) no cabeçalho assim que um imóvel é
+// carregado; sem imóvel carregado (ou sem nenhum desses três dados preenchido), o cabeçalho fica limpo,
+// sem nenhum texto de placeholder.
+function atualizaSubtituloHeader(){
+  const el = document.getElementById('header-phase');
+  const linha1Partes = [];
+  if(state.feature && state.nome) linha1Partes.push(state.nome);
+  if(state.feature && state.numeroCar) linha1Partes.push(`CAR: ${state.numeroCar}`);
+  const linha1 = linha1Partes.join(' · ');
+  const linha2 = (state.feature && state.proprietario) ? `Proprietário: ${state.proprietario}` : '';
+  if(!linha1 && !linha2){
+    el.style.display = 'none';
+    el.innerHTML = '';
+    return;
+  }
+  el.style.display = 'flex';
+  el.innerHTML = (linha1 ? `<span class="phase-l1">${escapeHtml(linha1)}</span>` : '')
+    + (linha2 ? `<span class="phase-l2">${escapeHtml(linha2)}</span>` : '');
+}
+
 function populateForm(){
   document.getElementById('input-nome').value = state.nome;
   document.getElementById('input-proprietario').value = state.proprietario || '';
   document.getElementById('input-matricula').value = state.matricula || '';
+  document.getElementById('input-numero-car').value = state.numeroCar || '';
+  atualizaSubtituloHeader();
   document.getElementById('m-area').textContent = fmt(state.areaHa, 2);
   document.getElementById('m-perimetro').textContent = fmt(state.perimetroKm, 2);
   document.getElementById('i-centroide').textContent = `${fmt(state.centroid[1],5)}, ${fmt(state.centroid[0],5)}`;
@@ -1207,10 +1247,11 @@ function populateForm(){
   document.getElementById('i-estado').textContent = '—';
 }
 
-['input-nome','input-proprietario','input-matricula'].forEach(id=>{
+['input-nome','input-proprietario','input-matricula','input-numero-car'].forEach(id=>{
   document.getElementById(id).addEventListener('input', e=>{
-    const map2 = {'input-nome':'nome','input-proprietario':'proprietario','input-matricula':'matricula'};
+    const map2 = {'input-nome':'nome','input-proprietario':'proprietario','input-matricula':'matricula','input-numero-car':'numeroCar'};
     state[map2[id]] = e.target.value;
+    atualizaSubtituloHeader();
   });
 });
 
@@ -2617,11 +2658,21 @@ function classifyResult(connectorId, pct, group, featureName){
     if(pct <= 0) return {label:`Nenhuma área com ${rotulo}`, cls:'ok'};
     return {label:`Área com ${rotulo}`, cls:'info'};
   }
-  if(CAMADAS_IDENTIDADE_IMOVEL.includes(connectorId) && pct >= 90 && featureName && state.nome){
-    const a = normalizarNomeImovel(featureName), b = normalizarNomeImovel(state.nome);
-    if(a && b && (a===b || a.includes(b) || b.includes(a))){
-      return {label:'Dados do imóvel pesquisado', cls:'info'};
+  if(CAMADAS_IDENTIDADE_IMOVEL.includes(connectorId) && pct >= 90){
+    if(featureName && state.nome){
+      const a = normalizarNomeImovel(featureName), b = normalizarNomeImovel(state.nome);
+      if(a && b && (a===b || a.includes(b) || b.includes(a))){
+        return {label:'Dados do imóvel pesquisado', cls:'info'};
+      }
     }
+    // sobreposição ≥90% sem nome pra comparar (ou nomes que não batem): mesmo assim NÃO tratamos como
+    // vermelho/crítico. Essas camadas (SIGEF/SNCI/ATP/Simcar Em Análise) são o cadastro do PRÓPRIO imóvel
+    // na base pesquisada, não uma reivindicação de terceiro — e o campo de "nome" que essas bases devolvem
+    // quase nunca é o nome do imóvel (é protocolo, código etc.), então exigir nome igual pra cima de 90% de
+    // sobreposição só gerava falso alarme (ex.: "Simcar Em Análise" e "ATP" aparecendo como CRÍTICO no
+    // relatório mesmo sendo 100% o próprio imóvel). Mesmo critério de "provável mesmo imóvel" já usado em
+    // notaSnciProvavelMesmoImovel().
+    return {label:'Dados do imóvel pesquisado', cls:'info'};
   }
   return classify(pct, group);
 }
@@ -2657,12 +2708,11 @@ function corCardFeicao(connectorId, cls){
 // casos em que pct é alto mas o nome NÃO bateu (ex.: nome antigo diferente demais pra normalizar):
 // mantém o alerta como está (não dá pra ter certeza automática), só avisa que pode ser o mesmo imóvel.
 function notaSnciProvavelMesmoImovel(connectorId, pct, featureName){
-  if(!/^incra_snci_/.test(connectorId) || pct < 90) return '';
-  if(featureName && state.nome){
-    const a = normalizarNomeImovel(featureName), b = normalizarNomeImovel(state.nome);
-    if(a && b && (a===b || a.includes(b) || b.includes(a))) return ''; // já reclassificado acima, não repete a nota
-  }
-  return 'ℹ️ Sobreposição muito alta com base <b>pré-SIGEF (SNCI)</b> — padrão comum quando é o <b>mesmo imóvel sob um registro/nome antigo</b>, não necessariamente conflito com terceiro. Confira o nº de processo/certificação no popup da feição antes de tratar como sobreposição real.';
+  // pct>=90 pra qualquer camada de CAMADAS_IDENTIDADE_IMOVEL (SNCI incluso) já é reclassificado direto em
+  // classifyResult() como "Dados do imóvel pesquisado" — com ou sem nome batendo — então essa nota extra só
+  // repetiria a mesma informação. Fica sem uso prático hoje, mantida por segurança caso o limite de
+  // classifyResult mude no futuro e volte a precisar de um aviso à parte pra esse caso específico do SNCI.
+  return '';
 }
 
 document.getElementById('select-threshold').addEventListener('change', e=>{
@@ -3028,7 +3078,8 @@ document.getElementById('btn-reset').addEventListener('click', ()=>{
   overlapResults = [];
   for(let i=connectors.length-1;i>=0;i--){ if(connectors[i].status==='local') connectors.splice(i,1); }
   Object.keys(sourceStatusLog).forEach(k=> delete sourceStatusLog[k]);
-  Object.assign(state, {feature:null, layer:null, areaHa:null, perimetroKm:null, centroid:null, municipio:null, estado:null, crsInfo:null, sourceFormat:null, importedAt:null, nome:'', proprietario:'', matricula:''});
+  Object.assign(state, {feature:null, layer:null, areaHa:null, perimetroKm:null, centroid:null, municipio:null, estado:null, crsInfo:null, sourceFormat:null, importedAt:null, nome:'', proprietario:'', matricula:'', numeroCar:''});
+  atualizaSubtituloHeader();
   renderResultsPanel();
   dropzone.classList.remove('hidden');
   document.getElementById('resumo-empty').style.display = 'block';
@@ -3050,10 +3101,50 @@ async function gerarRelatorio(){
   if(!state.feature) return;
   toast('Preparando relatório…');
   let mapImg = '';
+  let mapCaptureAviso = '';
   try{
-    const canvas = await html2canvas(document.getElementById('map'), {useCORS:true, allowTaint:true, logging:false});
-    mapImg = canvas.toDataURL('image/png');
-  }catch(e){ console.warn('Não foi possível capturar o mapa para o relatório:', e); }
+    const mapEl = document.getElementById('map');
+    // espera um evento (ou estoura um tempo limite, pra nunca travar o relatório se o evento não disparar —
+    // ex.: fitBounds sem mudança real de posição não dispara 'moveend', tile com erro não dispara 'load')
+    const aguardaEvento = (emitter, evento, timeoutMs)=> new Promise(resolve=>{
+      let done = false;
+      const finish = ()=>{ if(!done){ done = true; resolve(); } };
+      emitter.once(evento, finish);
+      setTimeout(finish, timeoutMs);
+    });
+    // recentraliza no imóvel antes de capturar — o mapa em tela pode estar deslocado (usuário navegou pra
+    // olhar uma sobreposição específica), e o relatório deve sempre sair enquadrado no imóvel, não em
+    // qualquer posição em que o mapa tenha ficado
+    if(state.layer){
+      map.fitBounds(state.layer.getBounds(), { padding:[40,40] });
+      await aguardaEvento(map, 'moveend', 1500);
+    }
+    // espera os tiles da posição/zoom novos terminarem de carregar — antes disso era um tempo fixo de
+    // 600ms, que carregava a tempo em conexões rápidas mas não em conexões mais lentas (por isso "às vezes
+    // carrega, às vezes não"); agora espera o evento real de "carregamento completo" da camada de base
+    if(currentBaseLayer) await aguardaEvento(currentBaseLayer, 'load', 4000);
+    await new Promise(res=> setTimeout(res, 350)); // folga curta pro navegador terminar de pintar os tiles
+    const canvas = await html2canvas(mapEl, {
+      useCORS:true, allowTaint:true, logging:false,
+      width: mapEl.offsetWidth, height: mapEl.offsetHeight, scale:1
+    });
+    if(canvas.width < 50 || canvas.height < 50){
+      // captura "vazia" (dimensão minúscula) — mais comum que dar erro; sem essa checagem o relatório
+      // ficava com uma imagem quase invisível (um pontinho) sem explicar o motivo
+      mapCaptureAviso = 'Não foi possível gerar uma imagem do mapa desta vez (tente de novo depois do mapa terminar de carregar, ou troque a camada de satélite/base e gere o relatório novamente).';
+    } else {
+      try{
+        mapImg = canvas.toDataURL('image/png');
+      }catch(taintErr){
+        // canvas "contaminado" por imagem de outro domínio sem CORS liberado (algumas bases de satélite não
+        // liberam) — não dá pra extrair a imagem do navegador por segurança; o resto do relatório segue normal
+        mapCaptureAviso = 'A imagem de satélite/mapa atual não pôde ser incluída no relatório (restrição de segurança do provedor de imagens usado nessa camada de base). O restante do relatório não é afetado — tente trocar a camada de base (ex.: "Satélite (Esri)") e gerar de novo.';
+      }
+    }
+  }catch(e){
+    console.warn('Não foi possível capturar o mapa para o relatório:', e);
+    mapCaptureAviso = 'Não foi possível capturar uma imagem do mapa para este relatório.';
+  }
 
   const now = new Date().toLocaleString('pt-BR');
   const reportMode = document.getElementById('select-report-mode').value; // 'completo' | 'resumido'
@@ -3164,7 +3255,9 @@ async function gerarRelatorio(){
         <tr><td>Formato de origem</td><td>${state.sourceFormat}</td></tr>
       </table>
 
-      ${mapImg ? `<h3>Mapa</h3><img src="${mapImg}">` : ''}
+      ${mapImg
+        ? `<h3>Mapa</h3><img src="${mapImg}">`
+        : (mapCaptureAviso ? `<h3>Mapa</h3><div class="notice">⚠️ ${escapeHtml(mapCaptureAviso)}</div>` : '')}
 
       <h3>Alertas da Propriedade</h3>
       ${alertsHtml}
