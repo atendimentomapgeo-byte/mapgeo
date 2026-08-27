@@ -3102,8 +3102,16 @@ async function gerarRelatorio(){
   toast('Preparando relatório…');
   let mapImg = '';
   let mapCaptureAviso = '';
+  const mapEl = document.getElementById('map');
+  // O tamanho do mapa na tela varia bastante (janela estreita, celular, painéis abertos) — em telas
+  // pequenas o painel do mapa pode ficar com poucas dezenas de pixels de altura, e a imagem do relatório
+  // saía minúscula (praticamente um pontinho) mesmo sem nenhum erro, porque ela simplesmente refletia
+  // o tamanho real do mapa naquele momento. Por isso, só durante a geração do relatório, o mapa é
+  // redimensionado temporariamente para um tamanho fixo e generoso (restaurado no "finally" mais abaixo,
+  // mesmo se algo der errado no meio do processo).
+  const LARGURA_RELATORIO_MAPA = 900, ALTURA_RELATORIO_MAPA = 600;
+  const larguraOriginalInline = mapEl.style.width, alturaOriginalInline = mapEl.style.height;
   try{
-    const mapEl = document.getElementById('map');
     // espera um evento (ou estoura um tempo limite, pra nunca travar o relatório se o evento não disparar —
     // ex.: fitBounds sem mudança real de posição não dispara 'moveend', tile com erro não dispara 'load')
     const aguardaEvento = (emitter, evento, timeoutMs)=> new Promise(resolve=>{
@@ -3112,11 +3120,17 @@ async function gerarRelatorio(){
       emitter.once(evento, finish);
       setTimeout(finish, timeoutMs);
     });
+
+    mapEl.style.width = LARGURA_RELATORIO_MAPA + 'px';
+    mapEl.style.height = ALTURA_RELATORIO_MAPA + 'px';
+    map.invalidateSize({animate:false, pan:false});
+
     // recentraliza no imóvel antes de capturar — o mapa em tela pode estar deslocado (usuário navegou pra
     // olhar uma sobreposição específica), e o relatório deve sempre sair enquadrado no imóvel, não em
-    // qualquer posição em que o mapa tenha ficado
+    // qualquer posição em que o mapa tenha ficado. Isso precisa vir DEPOIS do redimensionamento acima,
+    // senão o enquadramento seria calculado para o tamanho antigo (errado) do painel.
     if(state.layer){
-      map.fitBounds(state.layer.getBounds(), { padding:[40,40] });
+      map.fitBounds(state.layer.getBounds(), { padding:[40,40], animate:false });
       await aguardaEvento(map, 'moveend', 1500);
     }
     // espera os tiles da posição/zoom novos terminarem de carregar — antes disso era um tempo fixo de
@@ -3124,14 +3138,134 @@ async function gerarRelatorio(){
     // carrega, às vezes não"); agora espera o evento real de "carregamento completo" da camada de base
     if(currentBaseLayer) await aguardaEvento(currentBaseLayer, 'load', 4000);
     await new Promise(res=> setTimeout(res, 350)); // folga curta pro navegador terminar de pintar os tiles
-    const canvas = await html2canvas(mapEl, {
-      useCORS:true, allowTaint:true, logging:false,
-      width: mapEl.offsetWidth, height: mapEl.offsetHeight, scale:1
-    });
-    if(canvas.width < 50 || canvas.height < 50){
-      // captura "vazia" (dimensão minúscula) — mais comum que dar erro; sem essa checagem o relatório
-      // ficava com uma imagem quase invisível (um pontinho) sem explicar o motivo
-      mapCaptureAviso = 'Não foi possível gerar uma imagem do mapa desta vez (tente de novo depois do mapa terminar de carregar, ou troque a camada de satélite/base e gere o relatório novamente).';
+
+    // O html2canvas tem um problema conhecido e antigo pra capturar tiles do Leaflet: o Leaflet posiciona
+    // cada tile de imagem via "transform: translate3d(...)" (por performance), e o html2canvas não reconstrói
+    // esse posicionamento de forma confiável — o resultado sai com o contorno do imóvel certinho mas SEM
+    // nenhuma imagem de satélite/mapa por baixo (um retângulo praticamente vazio). Por isso, a camada de base
+    // (tiles) é desenhada aqui manualmente, direto a partir dos tiles já carregados pelo Leaflet — usando as
+    // mesmas contas de posição que o próprio Leaflet usa internamente — e só o restante (contorno do imóvel,
+    // camadas consultadas, controles) fica por conta do html2canvas, que lida bem com esse conteúdo vetorial.
+    const larguraMapa = mapEl.offsetWidth, alturaMapa = mapEl.offsetHeight;
+    const canvasBase = document.createElement('canvas');
+    canvasBase.width = larguraMapa; canvasBase.height = alturaMapa;
+    const ctxBase = canvasBase.getContext('2d');
+    // Os tiles que o Leaflet já carregou na tela foram pedidos sem "modo CORS" (o app nunca precisou disso
+    // pra só EXIBIR o mapa) — então usar esses elementos <img> diretamente no canvas deixa o canvas
+    // "contaminado" (todo navegador bloqueia depois ler os pixels de volta, por segurança), e é exatamente
+    // isso que fazia o relatório cair sempre no aviso de "não foi possível gerar a imagem", mesmo com os
+    // tiles certinhos na tela. Por isso, só para o relatório, pedimos uma cópia extra de cada tile visível,
+    // dessa vez em modo CORS — se o provedor de imagens permitir uso cross-origin (a maioria dos provedores
+    // públicos usados aqui permite), essa cópia pode ser lida de volta sem problema; se não permitir, só
+    // aquele tile específico fica de fora (sem travar o relatório nem afetar o mapa normal na tela, que
+    // continua usando os tiles originais sem nenhuma mudança).
+    async function desenhaTilesBaseNoCanvas(ctx, layer){
+      if(!layer || !layer._tiles) return 0;
+      let tileSize;
+      try{ const ts = layer.getTileSize(); tileSize = {x:ts.x, y:ts.y}; }catch(e){ tileSize = {x:256,y:256}; }
+      const tilesAtuais = Object.values(layer._tiles).filter(t=> t && t.current && t.el && t.el.src);
+      const copiasCors = await Promise.all(tilesAtuais.map(tile=> new Promise(resolve=>{
+        const img = new Image();
+        img.crossOrigin = 'anonymous';
+        let feito = false;
+        const finaliza = (ok)=>{ if(!feito){ feito = true; resolve(ok ? img : null); } };
+        img.onload = ()=> finaliza(true);
+        img.onerror = ()=> finaliza(false);
+        img.src = tile.el.src;
+        setTimeout(()=> finaliza(false), 3000); // não deixa uma cópia travada segurar o relatório inteiro
+      })));
+      // Posição de cada tile: NÃO dá pra calcular só com "coords do tile × tamanho do tile − pixelOrigin"
+      // (jeito mais óbvio, e o que este código usava antes) porque o Leaflet, durante um simples arrastar/
+      // deslocamento do mapa (sem trocar de zoom), NÃO atualiza o pixelOrigin — ele só desloca o painel do
+      // mapa inteiro (tiles + contorno do imóvel juntos) via uma transformação CSS separada. Ou seja,
+      // pixelOrigin sozinho só reflete a posição correta logo depois de um "reset" de zoom, não depois de
+      // qualquer deslocamento posterior — e é exatamente esse deslocamento posterior (o Leaflet ajusta a
+      // vista sozinho às vezes enquanto tiles terminam de carregar) que fazia os tiles saírem desenhados
+      // num lugar e o contorno do imóvel (capturado depois, pelo html2canvas, já refletindo a posição
+      // atual) sair alinhado em outro. A forma robusta e sempre correta é converter a posição de cada tile
+      // usando o próprio pipeline de coordenadas do Leaflet (unproject → latLngToContainerPoint), que leva
+      // em conta tanto o pixelOrigin quanto esse deslocamento do painel, sempre com o estado mais atual.
+      const zoomAtual = map.getZoom();
+      let desenhados = 0;
+      tilesAtuais.forEach((tile, i)=>{
+        const img = copiasCors[i];
+        if(!img) return;
+        if(tile.coords.z !== zoomAtual) return; // o zoom mudou durante a espera das cópias — coordenada desse tile não vale mais nessa escala, pula
+        const cantoNW = map.unproject(L.point(tile.coords.x * tileSize.x, tile.coords.y * tileSize.y), tile.coords.z);
+        const pt = map.latLngToContainerPoint(cantoNW);
+        const x = Math.round(pt.x), y = Math.round(pt.y);
+        try{ ctx.drawImage(img, x, y, tileSize.x, tileSize.y); desenhados++; }catch(e){ /* tile individual ainda contaminado — ignora só esse */ }
+      });
+      return desenhados;
+    }
+    const tilesBaseDesenhados = await desenhaTilesBaseNoCanvas(ctxBase, currentBaseLayer);
+
+    // esconde a camada de base durante a captura via html2canvas (senão ele tentaria — e provavelmente
+    // falharia — desenhar os mesmos tiles de novo por cima); o fundo some junto, então pedimos fundo
+    // transparente pro html2canvas, e depois compomos as duas camadas numa única imagem final.
+    // Importante: "backgroundColor:null" só evita que o HTML2CANVAS force um fundo padrão — o <div id="map">
+    // tem sua própria cor de fundo escura no CSS do app, e essa cor É pintada normalmente pelo html2canvas
+    // (ele desenha o elemento como está). Por isso também zeramos o background-color inline do próprio
+    // elemento do mapa durante essa captura específica, senão a camada de sobreposição sai opaca e cobre
+    // os tiles desenhados manualmente logo abaixo.
+    const opacidadeOriginal = currentBaseLayer && currentBaseLayer.options ? currentBaseLayer.options.opacity : undefined;
+    const bgInlineOriginal = mapEl.style.backgroundColor;
+    if(currentBaseLayer && currentBaseLayer.setOpacity) currentBaseLayer.setOpacity(0);
+    mapEl.style.backgroundColor = 'transparent';
+    let canvasOverlay;
+    try{
+      canvasOverlay = await html2canvas(mapEl, {
+        useCORS:true, allowTaint:true, logging:false, backgroundColor:null,
+        width: larguraMapa, height: alturaMapa, scale:1
+      });
+    } finally {
+      if(currentBaseLayer && currentBaseLayer.setOpacity) currentBaseLayer.setOpacity(opacidadeOriginal===undefined ? 1 : opacidadeOriginal);
+      mapEl.style.backgroundColor = bgInlineOriginal;
+    }
+    const canvas = document.createElement('canvas');
+    canvas.width = larguraMapa; canvas.height = alturaMapa;
+    const ctxFinal = canvas.getContext('2d');
+    // funco escuro do painel (mesmo tom do restante do app) por trás de tudo, caso não haja nenhum tile
+    ctxFinal.fillStyle = getComputedStyle(mapEl).backgroundColor || '#0a0e13';
+    ctxFinal.fillRect(0,0,larguraMapa,alturaMapa);
+    ctxFinal.drawImage(canvasBase, 0, 0);
+    try{ ctxFinal.drawImage(canvasOverlay, 0, 0); }catch(e){ /* segue só com a base, se a sobreposição falhar */ }
+
+    // checagem de "captura vazia": compara uma amostra de pontos do canvas final contra a cor de fundo do
+    // próprio painel do mapa — se quase tudo continuar igual ao fundo, é sinal de que nem os tiles nem o
+    // contorno do imóvel chegaram a aparecer (ex.: mapa não tinha terminado de carregar, ou o provedor de
+    // imagens bloqueou a captura), e mostramos um aviso claro em vez de uma imagem quase em branco.
+    const capturaPareceVazia = (cv)=>{
+      try{
+        const ctx = cv.getContext('2d');
+        const corFundo = ctx.getImageData(1, 1, 1, 1).data; // canto do canvas, sempre é só o fundo preenchido acima
+        const passos = 20;
+        let comConteudo = 0, amostrados = 0;
+        for(let i=0;i<passos;i++){
+          for(let j=0;j<passos;j++){
+            const x = Math.min(cv.width-1, Math.floor((i+0.5) * cv.width / passos));
+            const y = Math.min(cv.height-1, Math.floor((j+0.5) * cv.height / passos));
+            const px = ctx.getImageData(x, y, 1, 1).data;
+            amostrados++;
+            const dr = Math.abs(px[0]-corFundo[0]), dg = Math.abs(px[1]-corFundo[1]), db = Math.abs(px[2]-corFundo[2]);
+            if(dr+dg+db > 24) comConteudo++; // pixel visivelmente diferente do fundo puro
+          }
+        }
+        return amostrados === 0 || (comConteudo / amostrados) < 0.015;
+      }catch(e){
+        // getImageData estoura SecurityError se o canvas ficou "contaminado" por imagem cross-origin sem
+        // CORS liberado — nesse caso também tratamos como vazio, pra cair no aviso em vez de tentar exportar
+        return true;
+      }
+    };
+    if(canvas.width < 50 || canvas.height < 50 || capturaPareceVazia(canvas)){
+      mapCaptureAviso = 'Não foi possível gerar uma imagem do mapa desta vez (os tiles do mapa de fundo não terminaram de carregar, ou o provedor de imagens dessa camada de base bloqueou a captura). Tente gerar o relatório de novo depois do mapa carregar completamente, ou troque a camada de base (ex.: "Satélite (Esri)") antes de gerar.';
+    } else if(currentBaseLayer && tilesBaseDesenhados === 0){
+      // o contorno do imóvel/camadas consultadas apareceram normalmente, mas nenhum tile da imagem de
+      // satélite/mapa de fundo chegou a carregar a tempo — nesse caso a imagem sairia sem nenhuma imagem
+      // de fundo (só o contorno "flutuando" no vazio), o que é confuso; melhor avisar claramente do que
+      // entregar um mapa sem contexto nenhum.
+      mapCaptureAviso = 'O contorno do imóvel foi gerado, mas a imagem de satélite/mapa de fundo não terminou de carregar a tempo (conexão lenta ou instável). Tente gerar o relatório de novo com o mapa já totalmente carregado na tela.';
     } else {
       try{
         mapImg = canvas.toDataURL('image/png');
@@ -3144,6 +3278,13 @@ async function gerarRelatorio(){
   }catch(e){
     console.warn('Não foi possível capturar o mapa para o relatório:', e);
     mapCaptureAviso = 'Não foi possível capturar uma imagem do mapa para este relatório.';
+  }finally{
+    // devolve o mapa ao tamanho normal da tela, aconteça o que acontecer acima — senão o mapa ficaria
+    // "travado" no tamanho fixo usado só pra captura do relatório
+    mapEl.style.width = larguraOriginalInline;
+    mapEl.style.height = alturaOriginalInline;
+    map.invalidateSize({animate:false, pan:false});
+    if(state.layer) map.fitBounds(state.layer.getBounds(), { padding:[40,40], animate:false });
   }
 
   const now = new Date().toLocaleString('pt-BR');
