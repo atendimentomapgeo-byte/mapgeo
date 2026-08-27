@@ -15,6 +15,9 @@
 <script src="https://cdn.jsdelivr.net/npm/@tmcw/togeojson@5.8.1/dist/togeojson.umd.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/shpjs@4.0.4/dist/shp.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+<!-- Earth Engine JS client — usado só na camada histórica "Landsat (1984+)"; se falhar ao carregar (sem rede,
+     bloqueio de firewall etc.) o app inteiro continua funcionando normalmente, só essa camada específica fica indisponível -->
+<script src="https://ajax.googleapis.com/ajax/libs/earthengine/0.1.365/earthengine-api.min.js"></script>
 
 <style>
 :root{
@@ -510,6 +513,7 @@ details.layer-group .layer-group-body{padding:2px 13px 12px;border-top:1px solid
       <div class="basemap-row" id="basemap-row"></div>
       <div class="basemap-historical" id="basemap-historical" style="display:none;">
         <span id="historical-loading" style="display:none;">Carregando datas…</span>
+        <button class="small" id="btn-ee-login" style="display:none;">Fazer login com Google</button>
         <select id="select-historical-date"></select>
       </div>
     </div>
@@ -802,6 +806,161 @@ btnWayback.onclick = async ()=>{
   }
 };
 basemapRow.appendChild(btnWayback);
+
+// ---------- Landsat 1984+ via Google Earth Engine — requer login Google (uso pessoal/não comercial) ----------
+// Client ID OAuth criado no Google Cloud (projeto registrado no Earth Engine para uso não comercial).
+// A origem autorizada nesse Client ID precisa ser exatamente o domínio onde este HTML está hospedado
+// (por isso essa camada só funciona publicada via https, nunca abrindo o arquivo localmente).
+const EE_CLIENT_ID = '873571718978-dnfqu05eqeeskq4c1psohp97s5ida8a9.apps.googleusercontent.com';
+const EE_CLOUD_PROJECT = 'eloquent-yew-479223-r9';
+const LANDSAT_ANO_MIN = 1984, LANDSAT_ANO_MAX = 2025;
+
+let eeInicializado = false;
+let eeInicializando = false;
+const btnEeLogin = document.getElementById('btn-ee-login');
+
+// garante login + ee.initialize() antes de montar qualquer composto Landsat; chama quandoPronto() só depois
+// de tudo certo, ou quandoErro(mensagem) se algo falhar em qualquer etapa (rede, login recusado, etc.)
+function eeGarantirInicializado(quandoPronto, quandoErro){
+  if(eeInicializado){ quandoPronto(); return; }
+  if(typeof ee === 'undefined'){
+    quandoErro('Não consegui carregar a biblioteca do Google Earth Engine (verifique sua conexão e recarregue a página).');
+    return;
+  }
+  if(eeInicializando) return;
+  eeInicializando = true;
+
+  function finalizarInit(quandoPronto, quandoErro){
+    ee.initialize(null, null, function(){
+      eeInicializado = true;
+      eeInicializando = false;
+      quandoPronto();
+    }, function(erroInit){
+      eeInicializando = false;
+      quandoErro('Falha ao inicializar o Earth Engine: ' + erroInit);
+    }, null, EE_CLOUD_PROJECT);
+  }
+
+  ee.data.authenticateViaOauth(
+    EE_CLIENT_ID,
+    function(){ finalizarInit(quandoPronto, quandoErro); }, // login já existia (sessão silenciosa) — segue direto
+    function(erroLogin){
+      eeInicializando = false;
+      quandoErro('Falha na autenticação Google: ' + erroLogin);
+    },
+    ['https://www.googleapis.com/auth/earthengine.readonly'],
+    function(){ // login silencioso falhou — precisa de um clique do usuário pra abrir o popup do Google
+      eeInicializando = false;
+      btnEeLogin.style.display = '';
+      btnEeLogin.disabled = false;
+      btnEeLogin.textContent = 'Fazer login com Google';
+      btnEeLogin.onclick = function(){
+        btnEeLogin.disabled = true;
+        btnEeLogin.textContent = 'Abrindo login…';
+        ee.data.authenticateViaPopup(function(){
+          btnEeLogin.style.display = 'none';
+          finalizarInit(quandoPronto, quandoErro);
+        }, function(erroPopup){
+          btnEeLogin.disabled = false;
+          btnEeLogin.textContent = 'Fazer login com Google';
+          quandoErro('Login cancelado ou bloqueado pelo navegador: ' + erroPopup);
+        });
+      };
+      quandoErro('Faça login com uma conta Google cadastrada no Earth Engine para ver imagens Landsat.');
+    },
+    true
+  );
+}
+
+// máscara de nuvem/sombra/saturação padrão pro Landsat Coleção 2 Nível 2 (mesma lógica pra L5/L7/L8, os
+// nomes de banda QA_PIXEL/QA_RADSAT/SR_B* são iguais nas três coleções) + escala pra refletância de superfície
+function mascaraNuvemLandsatC2L2(img){
+  const qa = img.select('QA_PIXEL');
+  const semNuvem = qa.bitwiseAnd(1<<1).eq(0)   // dilated cloud
+    .and(qa.bitwiseAnd(1<<3).eq(0))            // cloud
+    .and(qa.bitwiseAnd(1<<4).eq(0));           // cloud shadow
+  const semSaturacao = img.select('QA_RADSAT').eq(0);
+  const opticas = img.select('SR_B.').multiply(0.0000275).add(-0.2);
+  return img.addBands(opticas, null, true).updateMask(semNuvem).updateMask(semSaturacao);
+}
+
+// escolhe a coleção certa pro ano (Landsat 5 até 2011, 7 no ano de transição, 8 de 2013 em diante) e monta
+// um composto anual (mediana) já sem nuvem — cada pixel do mosaico é a mediana das cenas limpas do ano
+function compostoLandsatPorAno(ano){
+  let colecaoId, bandasRGB;
+  if(ano <= 2011){ colecaoId = 'LANDSAT/LT05/C02/T1_L2'; bandasRGB = ['SR_B3','SR_B2','SR_B1']; }       // Landsat 5 TM
+  else if(ano === 2012){ colecaoId = 'LANDSAT/LE07/C02/T1_L2'; bandasRGB = ['SR_B3','SR_B2','SR_B1']; } // Landsat 7 ETM+
+  else { colecaoId = 'LANDSAT/LC08/C02/T1_L2'; bandasRGB = ['SR_B4','SR_B3','SR_B2']; }                 // Landsat 8 OLI
+  const colecao = ee.ImageCollection(colecaoId)
+    .filterDate(ano + '-01-01', ano + '-12-31')
+    .map(mascaraNuvemLandsatC2L2);
+  return { imagem: colecao.median(), bandas: bandasRGB };
+}
+
+function criaCamadaLandsat(ano, aoErroTile){
+  const layer = L.tileLayer('', { attribution:'Landsat / USGS, via Google Earth Engine', maxZoom:19, maxNativeZoom:13 });
+  const { imagem, bandas } = compostoLandsatPorAno(ano);
+  const visParams = { bands: bandas, min: 0.0, max: 0.3, gamma: 1.25 };
+  imagem.getMap(visParams, function(mapInfo, erro){
+    if(erro){ aoErroTile && aoErroTile(erro); return; }
+    if(!mapInfo){ aoErroTile && aoErroTile('Resposta vazia do Earth Engine.'); return; }
+    if(mapInfo.urlFormat){
+      layer.setUrl(mapInfo.urlFormat);
+    } else {
+      // fallback pra versões do cliente que não trazem urlFormat pronto: busca a URL de cada tile na hora
+      layer.getTileUrl = function(coords){ return ee.data.getTileUrl(mapInfo, coords.x, coords.y, coords.z); };
+      layer.redraw();
+    }
+  });
+  return layer;
+}
+
+const btnLandsat = document.createElement('button');
+btnLandsat.className = 'small';
+btnLandsat.textContent = 'Landsat (1984+)';
+btnLandsat.title = 'Imagem de satélite histórica desde 1984 — mosaico anual Landsat via Google Earth Engine (requer login Google, uso pessoal/não comercial)';
+btnLandsat.onclick = ()=>{
+  basemapHistorical.style.display = 'flex';
+  selectHistoricalDate.style.display = 'none';
+  btnEeLogin.style.display = 'none';
+  historicalLoading.style.display = '';
+  historicalLoading.textContent = 'Conectando ao Earth Engine…';
+
+  function popularAnosEAtivar(){
+    historicalLoading.style.display = 'none';
+    selectHistoricalDate.style.display = '';
+    selectHistoricalDate.innerHTML = '';
+    for(let ano = LANDSAT_ANO_MAX; ano >= LANDSAT_ANO_MIN; ano--){
+      const opt = document.createElement('option');
+      opt.value = String(ano);
+      opt.textContent = ano;
+      selectHistoricalDate.appendChild(opt);
+    }
+    selectHistoricalDate.onchange = ()=>{
+      const ano = Number(selectHistoricalDate.value);
+      historicalLoading.style.display = '';
+      historicalLoading.textContent = `Carregando Landsat ${ano}…`;
+      const layer = criaCamadaLandsat(ano, function(erro){
+        historicalLoading.style.display = '';
+        historicalLoading.textContent = 'Erro ao carregar essa imagem: ' + erro;
+      });
+      activateBaseLayer(layer, `Landsat ${ano}`, btnLandsat);
+      historicalLoading.style.display = 'none';
+    };
+    const anoInicial = LANDSAT_ANO_MAX;
+    const layer = criaCamadaLandsat(anoInicial, function(erro){
+      historicalLoading.style.display = '';
+      historicalLoading.textContent = 'Erro ao carregar essa imagem: ' + erro;
+    });
+    activateBaseLayer(layer, `Landsat ${anoInicial}`, btnLandsat);
+  }
+
+  eeGarantirInicializado(popularAnosEAtivar, function(msgErro){
+    historicalLoading.style.display = '';
+    historicalLoading.textContent = msgErro;
+  });
+};
+basemapRow.appendChild(btnLandsat);
 
 let propertyGroup = L.layerGroup().addTo(map);
 let measureGroup = L.layerGroup().addTo(map);
