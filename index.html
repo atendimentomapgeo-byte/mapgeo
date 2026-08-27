@@ -16,8 +16,11 @@
 <script src="https://cdn.jsdelivr.net/npm/shpjs@4.0.4/dist/shp.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
 <!-- Earth Engine JS client — usado só na camada histórica "Landsat (1984+)"; se falhar ao carregar (sem rede,
-     bloqueio de firewall etc.) o app inteiro continua funcionando normalmente, só essa camada específica fica indisponível -->
-<script src="https://ajax.googleapis.com/ajax/libs/earthengine/0.1.365/earthengine-api.min.js"></script>
+     bloqueio de firewall etc.) o app inteiro continua funcionando normalmente, só essa camada específica fica indisponível.
+     Versão fixada em 1.7.41 (via jsDelivr/npm) de propósito: o mirror antigo do Google (ajax.googleapis.com) ficou
+     parado numa versão de 2023 que ainda usava o login "Google Sign-In" clássico, desativado pelo Google em 2024
+     em favor do Google Identity Services — com a versão antiga o botão de login trava sem erro nenhum. -->
+<script src="https://cdn.jsdelivr.net/npm/@google/earthengine@1.7.41/build/ee_api_js.js"></script>
 
 <style>
 :root{
