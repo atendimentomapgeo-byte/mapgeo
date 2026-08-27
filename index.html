@@ -438,6 +438,10 @@ details.layer-group .layer-group-body{padding:2px 13px 12px;border-top:1px solid
 .report-page img{max-width:100%;border:1px solid #ccc;margin:14px 0;border-radius:4px;}
 .report-page .notice{border:1px solid #999;background:#f6f6f6;padding:11px;font-size:11px;margin-top:12px;border-radius:4px;}
 .report-page .notice:first-of-type{margin-top:12px;}
+/* mantém o título "Mapa" e a imagem juntos na mesma página ao imprimir — sem isso, o navegador às vezes
+   quebra a página bem entre o título e a imagem (ou empurra a imagem inteira pra página seguinte mesmo
+   sobrando bastante espaço), deixando a primeira folha com uma área em branco grande */
+.report-page .mapa-bloco{break-inside:avoid;page-break-inside:avoid;}
 
 </style>
 </head>
@@ -3144,8 +3148,18 @@ async function gerarRelatorio(){
     // esse posicionamento de forma confiável — o resultado sai com o contorno do imóvel certinho mas SEM
     // nenhuma imagem de satélite/mapa por baixo (um retângulo praticamente vazio). Por isso, a camada de base
     // (tiles) é desenhada aqui manualmente, direto a partir dos tiles já carregados pelo Leaflet — usando as
-    // mesmas contas de posição que o próprio Leaflet usa internamente — e só o restante (contorno do imóvel,
-    // camadas consultadas, controles) fica por conta do html2canvas, que lida bem com esse conteúdo vetorial.
+    // mesmas contas de posição que o próprio Leaflet usa internamente.
+    //
+    // O contorno do imóvel e as camadas consultadas (SIGEF, SEMA etc.) TAMBÉM são desenhados manualmente,
+    // pelo mesmo motivo — descoberto depois, ao investigar um relatório em que o contorno saía nitidamente
+    // fora de centro (encostado num canto, com um vazio enorme do lado oposto), mesmo com o mapa perfeitamente
+    // centralizado na tela. A causa: o renderizador SVG do Leaflet desenha essas camadas dentro de um <svg>
+    // maior que a área visível (por otimização, com uma margem extra), usando ao mesmo tempo um "viewBox"
+    // deslocado E uma transformação CSS própria — os dois se cancelam certinho no navegador normal, mas o
+    // html2canvas não reproduz essa combinação corretamente, e desenha o contorno deslocado por esse mesmo
+    // valor. Desenhando o contorno e as camadas diretamente no canvas — convertendo cada vértice com o
+    // pipeline de coordenadas do próprio Leaflet (latLngToContainerPoint), igual já era feito pros tiles —
+    // esse problema não existe: o resultado sempre bate exatamente com o que aparece na tela.
     const larguraMapa = mapEl.offsetWidth, alturaMapa = mapEl.offsetHeight;
     const canvasBase = document.createElement('canvas');
     canvasBase.width = larguraMapa; canvasBase.height = alturaMapa;
@@ -3200,28 +3214,59 @@ async function gerarRelatorio(){
     }
     const tilesBaseDesenhados = await desenhaTilesBaseNoCanvas(ctxBase, currentBaseLayer);
 
-    // esconde a camada de base durante a captura via html2canvas (senão ele tentaria — e provavelmente
-    // falharia — desenhar os mesmos tiles de novo por cima); o fundo some junto, então pedimos fundo
-    // transparente pro html2canvas, e depois compomos as duas camadas numa única imagem final.
-    // Importante: "backgroundColor:null" só evita que o HTML2CANVAS force um fundo padrão — o <div id="map">
-    // tem sua própria cor de fundo escura no CSS do app, e essa cor É pintada normalmente pelo html2canvas
-    // (ele desenha o elemento como está). Por isso também zeramos o background-color inline do próprio
-    // elemento do mapa durante essa captura específica, senão a camada de sobreposição sai opaca e cobre
-    // os tiles desenhados manualmente logo abaixo.
-    const opacidadeOriginal = currentBaseLayer && currentBaseLayer.options ? currentBaseLayer.options.opacity : undefined;
-    const bgInlineOriginal = mapEl.style.backgroundColor;
-    if(currentBaseLayer && currentBaseLayer.setOpacity) currentBaseLayer.setOpacity(0);
-    mapEl.style.backgroundColor = 'transparent';
-    let canvasOverlay;
-    try{
-      canvasOverlay = await html2canvas(mapEl, {
-        useCORS:true, allowTaint:true, logging:false, backgroundColor:null,
-        width: larguraMapa, height: alturaMapa, scale:1
-      });
-    } finally {
-      if(currentBaseLayer && currentBaseLayer.setOpacity) currentBaseLayer.setOpacity(opacidadeOriginal===undefined ? 1 : opacidadeOriginal);
-      mapEl.style.backgroundColor = bgInlineOriginal;
+    // converte uma cor "#rrggbb" pra "rgba(...)" com a opacidade de preenchimento da camada — usado abaixo
+    function corComAlpha(hex, alpha){
+      const m = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex||'');
+      if(!m) return hex;
+      const r = parseInt(m[1],16), g = parseInt(m[2],16), b = parseInt(m[3],16);
+      return `rgba(${r},${g},${b},${alpha})`;
     }
+    // desenha uma camada vetorial do Leaflet (contorno do imóvel, camada consultada etc.) diretamente no
+    // canvas, convertendo cada vértice com o pipeline de coordenadas do próprio Leaflet — ver comentário
+    // acima sobre por que isso substitui o html2canvas pra esse conteúdo também.
+    function desenhaCamadaVetorialNoCanvas(ctx, leafletLayer){
+      if(!leafletLayer || typeof leafletLayer.eachLayer !== 'function') return;
+      leafletLayer.eachLayer(sublyr=>{
+        if(typeof sublyr.eachLayer === 'function'){ desenhaCamadaVetorialNoCanvas(ctx, sublyr); return; }
+        if(typeof sublyr.getLatLngs !== 'function') return;
+        const rings = sublyr.getLatLngs();
+        if(!rings || !rings.length) return;
+        const isPolygon = (typeof L.Polygon !== 'undefined') && (sublyr instanceof L.Polygon);
+        // normaliza pra sempre "array de polígonos, cada um array de anéis" — Polygon simples (1 anel
+        // externo, ou externo+buracos) fica com 1 "polígono"; MultiPolygon já vem com vários
+        let poligonos;
+        if(Array.isArray(rings[0]) && Array.isArray(rings[0][0])) poligonos = rings;
+        else if(Array.isArray(rings[0])) poligonos = [rings];
+        else poligonos = [[rings]]; // linha simples (não-polígono), sem anel de verdade
+        const opts = sublyr.options || {};
+        const cor = opts.color || '#3388ff';
+        const espessura = opts.weight != null ? opts.weight : 3;
+        const temPreenchimento = isPolygon && opts.fill !== false;
+        const corPreench = corComAlpha(opts.fillColor || cor, opts.fillOpacity != null ? opts.fillOpacity : 0.2);
+        poligonos.forEach(aneis=>{
+          ctx.beginPath();
+          aneis.forEach(anel=>{
+            anel.forEach((latlng, i)=>{
+              const pt = map.latLngToContainerPoint(latlng);
+              if(i===0) ctx.moveTo(pt.x, pt.y); else ctx.lineTo(pt.x, pt.y);
+            });
+            if(isPolygon) ctx.closePath();
+          });
+          if(temPreenchimento){ ctx.fillStyle = corPreench; ctx.fill('evenodd'); }
+          if(opts.stroke !== false && espessura > 0){
+            ctx.strokeStyle = cor; ctx.lineWidth = espessura; ctx.stroke();
+          }
+        });
+      });
+    }
+    if(state.layer) desenhaCamadaVetorialNoCanvas(ctxBase, state.layer);
+    // só desenha as camadas consultadas que estão de fato visíveis no momento (respeita o botão "👁" de
+    // mostrar/ocultar camadas) — assim o relatório reflete exatamente o que está (ou não) na tela.
+    Object.keys(connectorLayers).forEach(id=>{
+      const layer = connectorLayers[id];
+      if(layer && map.hasLayer(layer)) desenhaCamadaVetorialNoCanvas(ctxBase, layer);
+    });
+
     const canvas = document.createElement('canvas');
     canvas.width = larguraMapa; canvas.height = alturaMapa;
     const ctxFinal = canvas.getContext('2d');
@@ -3229,7 +3274,6 @@ async function gerarRelatorio(){
     ctxFinal.fillStyle = getComputedStyle(mapEl).backgroundColor || '#0a0e13';
     ctxFinal.fillRect(0,0,larguraMapa,alturaMapa);
     ctxFinal.drawImage(canvasBase, 0, 0);
-    try{ ctxFinal.drawImage(canvasOverlay, 0, 0); }catch(e){ /* segue só com a base, se a sobreposição falhar */ }
 
     // checagem de "captura vazia": compara uma amostra de pontos do canvas final contra a cor de fundo do
     // próprio painel do mapa — se quase tudo continuar igual ao fundo, é sinal de que nem os tiles nem o
@@ -3382,6 +3426,10 @@ async function gerarRelatorio(){
       <h1>Relatório Preliminar de Análise Fundiária e Ambiental</h1>
       <div class="rmeta">Imóvel: <b>${escapeHtml(state.nome||'—')}</b> · Gerado em ${now} · MapGEO — Fases 1–4 · Relatório ${reportMode==='resumido' ? 'resumido (por camada)' : 'completo (por feição)'}</div>
 
+      ${mapImg
+        ? `<div class="mapa-bloco"><h3>Mapa</h3><img src="${mapImg}"></div>`
+        : (mapCaptureAviso ? `<div class="mapa-bloco"><h3>Mapa</h3><div class="notice">⚠️ ${escapeHtml(mapCaptureAviso)}</div></div>` : '')}
+
       <h3>Identificação</h3>
       <table>
         <tr><td>Proprietário</td><td>${escapeHtml(state.proprietario||'—')}</td></tr>
@@ -3395,10 +3443,6 @@ async function gerarRelatorio(){
         <tr><td>Sistema de referência</td><td>${state.crsInfo}</td></tr>
         <tr><td>Formato de origem</td><td>${state.sourceFormat}</td></tr>
       </table>
-
-      ${mapImg
-        ? `<h3>Mapa</h3><img src="${mapImg}">`
-        : (mapCaptureAviso ? `<h3>Mapa</h3><div class="notice">⚠️ ${escapeHtml(mapCaptureAviso)}</div>` : '')}
 
       <h3>Alertas da Propriedade</h3>
       ${alertsHtml}
@@ -3422,6 +3466,34 @@ async function gerarRelatorio(){
     </div>`;
 
   document.getElementById('report-view').innerHTML = html;
+  // A imagem do mapa vai embutida como um data URI enorme (às vezes vários MB em base64) dentro do HTML
+  // que acabamos de injetar via innerHTML. Definir innerHTML é síncrono, mas DECODIFICAR essa imagem (pra
+  // o navegador saber o tamanho real e poder desenhá-la) NÃO é — é assíncrono, igual a carregar uma imagem
+  // de rede. Chamar window.print() logo em seguida, sem esperar, é uma corrida: o instantâneo que vai pra
+  // impressão/PDF é tirado ANTES da imagem terminar de decodificar, e como o <img> não tem width/height
+  // fixos no HTML, antes de decodificar ele não tem tamanho nenhum — sai como um pontinho minúsculo (ou
+  // nada), mesmo com a imagem certinha (grande, correta) já disponível logo um instante depois. Isso
+  // acontecia em TODO relatório com mapa, independente de qualquer correção na captura em si. Por isso,
+  // esperamos a imagem realmente terminar de decodificar antes de mandar imprimir.
+  const imgRelatorioMapa = document.querySelector('#report-view img');
+  if(imgRelatorioMapa){
+    try{
+      if(imgRelatorioMapa.decode) await imgRelatorioMapa.decode();
+      else if(!imgRelatorioMapa.complete){
+        await new Promise(resolve=>{
+          let done = false;
+          const finish = ()=>{ if(!done){ done = true; resolve(); } };
+          imgRelatorioMapa.addEventListener('load', finish, {once:true});
+          imgRelatorioMapa.addEventListener('error', finish, {once:true});
+          setTimeout(finish, 3000);
+        });
+      }
+    }catch(e){ /* mesmo se a decodificação falhar, segue e imprime o resto do relatório normalmente */ }
+    // uma folga curta extra pro navegador terminar de aplicar o layout com o tamanho final da imagem
+    // antes de tirar o instantâneo de impressão (decode() resolvido não garante, por si só, que o reflow
+    // e a pintura já foram concluídos em todos os navegadores)
+    await new Promise(res=> requestAnimationFrame(()=> requestAnimationFrame(res)));
+  }
   window.print();
 }
 
