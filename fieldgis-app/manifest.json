@@ -1,0 +1,19 @@
+{
+  "name": "FieldGIS — Mapas e Navegação de Campo",
+  "short_name": "FieldGIS",
+  "description": "Aplicativo profissional offline de mapas, GPS e coleta de dados de campo para geoprocessamento, manejo florestal, topografia e levantamento ambiental.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#10161d",
+  "theme_color": "#10161d",
+  "lang": "pt-BR",
+  "categories": ["utilities", "navigation", "productivity"],
+  "icons": [
+    { "src": "assets/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "assets/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "assets/icons/icon-maskable-192.png", "sizes": "192x192", "type": "image/png", "purpose": "maskable" },
+    { "src": "assets/icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

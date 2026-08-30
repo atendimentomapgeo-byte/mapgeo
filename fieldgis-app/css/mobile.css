@@ -1,0 +1,155 @@
+/* =========================================================================
+   FieldGIS — mobile.css
+   Ajustes responsivos (telas pequenas/grandes), modo campo, menus de ação,
+   barra de desenho/medição e overlay de navegação/bússola.
+   ========================================================================= */
+
+/* ---------------------------- Menu de ação (+) ---------------------------- */
+.fg-actionsheet-list { display: flex; flex-direction: column; gap: 8px; }
+.fg-action-item {
+  display: flex; align-items: center; gap: 14px;
+  padding: 14px 12px;
+  background: var(--fg-bg-card);
+  border-radius: var(--fg-radius);
+  font-size: 15px;
+  font-weight: 600;
+}
+.fg-action-item .fg-action-icon {
+  width: 42px; height: 42px; border-radius: 50%;
+  background: rgba(255,255,255,0.06);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 20px;
+  flex-shrink: 0;
+}
+
+/* ---------------------------- Barra de captura/desenho ativo ---------------------------- */
+.fg-drawbar {
+  position: absolute;
+  left: 10px; right: 10px;
+  bottom: calc(84px + var(--fg-safe-bottom));
+  z-index: 600;
+  background: rgba(16,22,29,0.95);
+  border: 1px solid var(--fg-border);
+  border-radius: var(--fg-radius);
+  padding: 12px 14px;
+  box-shadow: var(--fg-shadow);
+}
+.fg-drawbar[hidden] { display: none; }
+.fg-drawbar-stats { display: flex; gap: 18px; margin-bottom: 10px; flex-wrap: wrap; }
+.fg-drawbar-stats .stat { display:flex; flex-direction: column; }
+.fg-drawbar-stats .stat .k { font-size: 10.5px; color: var(--fg-text-dim); text-transform: uppercase; }
+.fg-drawbar-stats .stat .v { font-size: 16px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.fg-drawbar-actions { display: flex; gap: 8px; }
+.fg-drawbar-actions .fg-btn { margin-top: 0; padding: 11px; font-size: 13.5px; }
+
+/* ---------------------------- Bússola / navegação ---------------------------- */
+.fg-nav-overlay {
+  position: absolute;
+  left: 10px; right: 10px;
+  top: calc(114px + var(--fg-safe-top));
+  z-index: 550;
+  background: rgba(16,22,29,0.95);
+  border: 1px solid var(--fg-border);
+  border-radius: var(--fg-radius);
+  padding: 12px 16px;
+  box-shadow: var(--fg-shadow);
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.fg-nav-overlay[hidden] { display: none; }
+.fg-nav-arrow-wrap { width: 54px; height: 54px; flex-shrink: 0; display:flex; align-items:center; justify-content:center; }
+.fg-nav-arrow { font-size: 40px; transition: transform 0.15s linear; color: var(--fg-accent); }
+.fg-nav-info { flex: 1; min-width: 0; }
+.fg-nav-info .fg-nav-dest { font-weight: 700; font-size: 14.5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.fg-nav-info .fg-nav-dist { font-size: 20px; font-weight: 800; color: var(--fg-accent); }
+.fg-nav-info .fg-nav-az { font-size: 12px; color: var(--fg-text-dim); }
+.fg-nav-close { font-size: 20px; color: var(--fg-text-dim); }
+
+/* ---------------------------- Busca ---------------------------- */
+.fg-search-overlay {
+  position: absolute; inset: 0; z-index: 950;
+  background: var(--fg-bg);
+  display: flex; flex-direction: column;
+}
+.fg-search-overlay[hidden] { display: none; }
+.fg-search-bar { display: flex; align-items: center; gap: 8px; padding: calc(10px + var(--fg-safe-top)) 12px 10px; border-bottom: 1px solid var(--fg-border); }
+.fg-search-bar input { flex: 1; }
+.fg-search-results { flex: 1; overflow-y: auto; padding: 6px 14px; }
+
+/* ---------------------------- Modo campo ---------------------------- */
+body.fg-field-mode .fg-topbar .fg-brand small { display: none; }
+.fg-field-panel {
+  position: absolute; inset: 0; z-index: 800;
+  background: var(--fg-bg);
+  display: flex; flex-direction: column;
+}
+.fg-field-panel[hidden] { display: none; }
+.fg-field-header { display:flex; align-items:center; justify-content:space-between; padding: calc(14px + var(--fg-safe-top)) 16px 10px; }
+.fg-field-header h2 { margin:0; font-size:18px; }
+.fg-field-grid {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+  padding: 10px 16px calc(16px + var(--fg-safe-bottom));
+  overflow-y: auto;
+}
+.fg-field-tile {
+  background: var(--fg-bg-card);
+  border: 1px solid var(--fg-border);
+  border-radius: var(--fg-radius);
+  padding: 16px;
+  display: flex; flex-direction: column; justify-content: center; align-items: center;
+  gap: 6px;
+  min-height: 100px;
+}
+.fg-field-tile .fg-ft-icon { font-size: 26px; }
+.fg-field-tile .fg-ft-label { font-size: 12px; color: var(--fg-text-dim); text-transform: uppercase; }
+.fg-field-tile .fg-ft-value { font-size: 17px; font-weight: 700; font-variant-numeric: tabular-nums; text-align: center; }
+.fg-field-tile.action { background: var(--fg-primary); }
+.fg-field-tile.action.record { background: var(--fg-danger); }
+.fg-field-tile.action .fg-ft-label { color: rgba(255,255,255,0.85); }
+
+/* ---------------------------- Galeria de fotos ---------------------------- */
+.fg-photo-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 10px; }
+.fg-photo-thumb { position: relative; aspect-ratio: 1; border-radius: var(--fg-radius-sm); overflow: hidden; background: var(--fg-bg-card); }
+.fg-photo-thumb img { width: 100%; height: 100%; object-fit: cover; }
+
+/* ---------------------------- Wizard de importação ---------------------------- */
+.fg-step-indicator { display: flex; gap: 6px; margin-bottom: 14px; }
+.fg-step-indicator span { flex: 1; height: 4px; border-radius: 2px; background: var(--fg-border); }
+.fg-step-indicator span.done { background: var(--fg-primary); }
+.fg-field-map-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+
+/* ---------------------------- Camadas ---------------------------- */
+.fg-layer-item { display: flex; align-items: center; gap: 10px; padding: 10px 2px; border-bottom: 1px solid var(--fg-border); }
+.fg-layer-item:last-child { border-bottom: none; }
+.fg-layer-item .fg-layer-name { flex: 1; font-weight: 600; font-size: 14px; }
+.fg-layer-item input[type=range] { width: 70px; }
+.fg-layer-color { width: 22px; height: 22px; border-radius: 50%; border: 2px solid rgba(255,255,255,0.4); flex-shrink:0; }
+
+/* ---------------------------- Responsividade: tablets e desktop ---------------------------- */
+@media (min-width: 720px) {
+  :root { font-size: 16px; }
+  .fg-overlay { align-items: center; }
+  .fg-sheet {
+    border-radius: 18px;
+    max-height: 84%;
+    width: 460px;
+  }
+  .fg-drawbar, .fg-nav-overlay { max-width: 420px; margin: 0 auto; left: 0; right: 0; }
+  .fg-bottomnav { max-width: 620px; left: 50%; transform: translateX(-50%); right: auto; width: 100%; border-radius: 20px 20px 0 0; }
+  .fg-field-grid { grid-template-columns: repeat(3, 1fr); max-width: 640px; margin: 0 auto; width: 100%; }
+}
+
+@media (min-width: 1080px) {
+  .fg-sheet { width: 520px; }
+  .fg-topbar { max-width: 640px; left: 50%; transform: translateX(-50%); right: auto; width: calc(100% - 20px); }
+}
+
+/* ---------------------------- Acessibilidade: alvos de toque grandes ---------------------------- */
+@media (pointer: coarse) {
+  .fg-icon-btn, .fg-close-btn { min-width: 42px; min-height: 42px; }
+  .fg-btn { min-height: 46px; }
+}

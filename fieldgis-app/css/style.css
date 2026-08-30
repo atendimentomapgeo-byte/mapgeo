@@ -1,0 +1,429 @@
+/* =========================================================================
+   FieldGIS — style.css
+   Identidade visual própria: paleta escura de "geoprocessamento profissional"
+   (não reutiliza cores, ícones ou elementos de nenhum aplicativo comercial).
+   ========================================================================= */
+
+:root {
+  --fg-bg: #10161d;
+  --fg-bg-elevated: #1b2430;
+  --fg-bg-card: #212c3a;
+  --fg-border: #313e4e;
+  --fg-primary: #1a73e8;
+  --fg-primary-dark: #0f52a8;
+  --fg-accent: #00c896;
+  --fg-warn: #ffb300;
+  --fg-danger: #e53935;
+  --fg-track: #e53935;
+  --fg-polygon: #2e7d32;
+  --fg-text: #eef2f7;
+  --fg-text-dim: #9aa8b8;
+  --fg-text-faint: #6b7a8d;
+  --fg-radius: 14px;
+  --fg-radius-sm: 8px;
+  --fg-shadow: 0 4px 18px rgba(0, 0, 0, 0.35);
+  --fg-safe-bottom: env(safe-area-inset-bottom, 0px);
+  --fg-safe-top: env(safe-area-inset-top, 0px);
+  font-size: 16px;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  /* Corrige faixa vazia no rodapé ao abrir como app instalado na Tela de
+     Início do iOS: o WebKit em modo standalone às vezes calcula "100%" com
+     base no viewport "com barra do Safari visível", que nem existe mais
+     nesse modo. 100dvh usa a altura real do viewport dinâmico. Em iOS mais
+     antigos (sem suporte a dvh), a variável --fg-vh (definida via JS em
+     index.html) assume o controle. */
+  height: 100dvh;
+  height: var(--fg-vh, 100dvh);
+  overflow: hidden;
+  background: var(--fg-bg);
+  color: var(--fg-text);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+}
+
+button {
+  font-family: inherit;
+  border: none;
+  background: none;
+  color: inherit;
+  cursor: pointer;
+}
+
+input, select, textarea {
+  font-family: inherit;
+  color: var(--fg-text);
+  background: var(--fg-bg-elevated);
+  border: 1px solid var(--fg-border);
+  border-radius: var(--fg-radius-sm);
+  padding: 10px 12px;
+  font-size: 15px;
+  width: 100%;
+  user-select: text;
+}
+input:focus, select:focus, textarea:focus {
+  outline: 2px solid var(--fg-primary);
+  outline-offset: -1px;
+}
+
+label {
+  display: block;
+  font-size: 13px;
+  color: var(--fg-text-dim);
+  margin-bottom: 4px;
+  margin-top: 12px;
+}
+
+#app {
+  position: fixed;
+  inset: 0;
+  height: 100dvh;
+  height: var(--fg-vh, 100dvh);
+  display: flex;
+  flex-direction: column;
+}
+
+/* ---------------------------- Top bar ---------------------------- */
+.fg-topbar {
+  position: absolute;
+  top: calc(10px + var(--fg-safe-top));
+  left: 10px;
+  right: 10px;
+  z-index: 500;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  pointer-events: none;
+}
+.fg-topbar > * { pointer-events: auto; }
+
+.fg-brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(16, 22, 29, 0.88);
+  backdrop-filter: blur(6px);
+  padding: 8px 14px;
+  border-radius: 999px;
+  box-shadow: var(--fg-shadow);
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  flex: 1;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.fg-brand .fg-logo-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--fg-accent); flex-shrink:0; }
+.fg-brand small { color: var(--fg-text-dim); font-weight: 400; display:block; font-size: 11px; }
+
+.fg-icon-btn {
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  background: rgba(16, 22, 29, 0.88);
+  backdrop-filter: blur(6px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 19px;
+  box-shadow: var(--fg-shadow);
+  flex-shrink: 0;
+}
+.fg-icon-btn:active { transform: scale(0.92); }
+
+/* ---------------------------- GPS badge ---------------------------- */
+.fg-gps-badge {
+  position: absolute;
+  top: calc(64px + var(--fg-safe-top));
+  left: 10px;
+  z-index: 500;
+  background: rgba(16, 22, 29, 0.9);
+  border-radius: var(--fg-radius);
+  padding: 8px 12px;
+  box-shadow: var(--fg-shadow);
+  font-size: 12.5px;
+  min-width: 150px;
+}
+.fg-gps-badge .fg-gps-row { display: flex; align-items: center; gap: 6px; margin-bottom: 2px; }
+.fg-dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
+.fg-dot.excellent, .fg-dot.good { background: #2ecc71; }
+.fg-dot.moderate { background: #ffb300; }
+.fg-dot.weak, .fg-dot.unknown { background: #e53935; }
+.fg-gps-badge .fg-coord { color: var(--fg-text-dim); font-variant-numeric: tabular-nums; display: inline-block; border-bottom: 1px dashed var(--fg-text-faint); }
+
+/* ---------------------------- Map ---------------------------- */
+#map {
+  position: absolute;
+  inset: 0;
+  /* z-index explícito (em vez de "auto") é essencial aqui: isola os elementos
+     internos do Leaflet (zoom, atribuição, marcadores, popups — que usam
+     z-index de até 1000 nas próprias folhas de estilo do Leaflet) dentro de
+     um contexto de empilhamento próprio, evitando que "vazem" para cima da
+     interface do app (barra inferior = 500, telas/modais = 900). Sem isso, o
+     controle de zoom nativo do Leaflet e outros elementos do mapa podem
+     aparecer sobre os botões do app e bloquear o toque neles. */
+  z-index: 1;
+  overflow: hidden;
+  background: #0c1015;
+}
+
+/*
+  #map-inner é o contêiner ONDE o Leaflet de fato roda (ver MapModule.init).
+  Ele é dimensionado em JS para ser maior que a tela — do tamanho da
+  diagonal do viewport — e fica centralizado dentro de #map. #map (a "janela"
+  externa) tem overflow:hidden e NUNCA gira; #map-inner é quem gira de
+  verdade quando a bússola está ativa (ver MapModule.setMapRotation).
+
+  Por que isso importa: girar só a "janela" visível deixava cantos pretos
+  aparecendo nos cantos da tela sempre que o mapa girava, porque o Leaflet só
+  carrega tiles para cobrir a área originalmente visível (retangular). Com
+  #map-inner maior que a diagonal do viewport, sempre existe conteúdo de
+  mapa/PDF cobrindo qualquer canto revelado pela rotação, em qualquer ângulo.
+*/
+#map-inner {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  background-image:
+    linear-gradient(rgba(255,255,255,0.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255,255,255,0.035) 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+.leaflet-container { background: #0c1015; font-family: inherit; }
+
+/* Sem transição de propósito: a rotação da seta precisa ficar perfeitamente
+   sincronizada, instante a instante, com a contra-rotação aplicada pela
+   bússola (ver MapModule.setMapRotation) — uma transição própria aqui faria
+   a seta "atrasar" em relação ao mapa e só alinhar depois de alguns
+   instantes, em vez de ficar sempre travada apontando pra cima. */
+.fg-position-arrow { }
+.fg-point-pin {
+  width: 26px; height: 34px;
+  background: var(--fg-primary);
+  border: 2px solid #fff;
+  border-radius: 50% 50% 50% 0;
+  transform: rotate(-45deg);
+  display: flex; align-items: center; justify-content: center;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.5);
+}
+.fg-point-pin span { transform: rotate(45deg); color: #fff; font-size: 10px; font-weight: 700; }
+.fg-grid-label { color: #ffb300; font-size: 10px; font-weight: 600; white-space: nowrap; text-shadow: 0 0 3px #000; }
+
+/* ---------------------------- Bottom nav ---------------------------- */
+.fg-bottomnav {
+  position: absolute;
+  left: 0; right: 0; bottom: 0;
+  z-index: 500;
+  background: rgba(16, 22, 29, 0.94);
+  backdrop-filter: blur(8px);
+  border-top: 1px solid var(--fg-border);
+  padding: 8px 6px calc(8px + var(--fg-safe-bottom));
+  display: flex;
+  justify-content: space-around;
+  align-items: center;
+}
+.fg-navbtn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 6px 10px;
+  border-radius: var(--fg-radius-sm);
+  font-size: 10.5px;
+  color: var(--fg-text-dim);
+  min-width: 54px;
+}
+.fg-navbtn .fg-navicon { font-size: 23px; }
+.fg-navbtn.active, .fg-navbtn:active { color: var(--fg-text); background: rgba(255,255,255,0.06); }
+.fg-navbtn.record { color: var(--fg-danger); }
+
+/* ---------------------------- Floating locate button ---------------------------- */
+.fg-fab-locate {
+  position: absolute;
+  right: 12px;
+  bottom: calc(84px + var(--fg-safe-bottom));
+  z-index: 500;
+  width: 50px; height: 50px;
+  border-radius: 50%;
+  background: var(--fg-bg-card);
+  border: 1px solid var(--fg-border);
+  box-shadow: var(--fg-shadow);
+  font-size: 22px;
+  display: flex; align-items: center; justify-content: center;
+}
+.fg-fab-locate.centered { background: var(--fg-accent); }
+
+.fg-fab-compass {
+  position: absolute;
+  right: 12px;
+  bottom: calc(146px + var(--fg-safe-bottom));
+  z-index: 500;
+  width: 44px; height: 44px;
+  border-radius: 50%;
+  background: var(--fg-bg-card);
+  border: 1px solid var(--fg-border);
+  box-shadow: var(--fg-shadow);
+  font-size: 19px;
+  display: flex; align-items: center; justify-content: center;
+}
+.fg-fab-compass.active { background: var(--fg-accent); }
+.fg-compass-label {
+  position: absolute;
+  bottom: -6px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--fg-bg);
+  border: 1px solid var(--fg-border);
+  border-radius: 999px;
+  padding: 1px 5px;
+  font-size: 9.5px;
+  font-weight: 600;
+  color: var(--fg-text-dim);
+  white-space: nowrap;
+}
+
+/* ---------------------------- Bottom sheets & modals ---------------------------- */
+.fg-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(0,0,0,0.5);
+  z-index: 900;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+}
+.fg-overlay.center { align-items: center; padding: 20px; }
+.fg-overlay[hidden] { display: none; }
+
+.fg-sheet {
+  background: var(--fg-bg-elevated);
+  width: 100%;
+  max-width: 560px;
+  /* % em vez de vh: o Safari calcula "vh" com base no viewport de layout, que
+     nem sempre encolhe quando o teclado abre — deixando esse limite maior
+     que a área realmente visível e empurrando o topo da tela pra trás da
+     barra de status. % resolve relativo ao próprio .fg-overlay, que herda a
+     altura correta (via --fg-vh) do #app. */
+  max-height: 88%;
+  border-radius: 18px 18px 0 0;
+  box-shadow: 0 -8px 30px rgba(0,0,0,0.5);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.fg-overlay.center .fg-sheet {
+  border-radius: 18px;
+  max-height: 90%;
+}
+.fg-sheet-handle {
+  width: 40px; height: 4px;
+  background: var(--fg-border);
+  border-radius: 2px;
+  margin: 10px auto 4px;
+  flex-shrink: 0;
+}
+.fg-sheet-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 18px 12px;
+  border-bottom: 1px solid var(--fg-border);
+  flex-shrink: 0;
+}
+.fg-sheet-header h2 { font-size: 17px; margin: 0; }
+.fg-sheet-body {
+  padding: 14px 18px calc(18px + var(--fg-safe-bottom));
+  overflow-y: auto;
+  user-select: text;
+}
+.fg-close-btn { font-size: 22px; color: var(--fg-text-dim); width: 32px; height: 32px; }
+
+/* ---------------------------- Buttons ---------------------------- */
+.fg-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 13px 18px;
+  border-radius: var(--fg-radius-sm);
+  background: var(--fg-bg-card);
+  border: 1px solid var(--fg-border);
+  font-size: 15px;
+  font-weight: 600;
+  width: 100%;
+  margin-top: 10px;
+}
+.fg-btn:active { transform: scale(0.98); }
+.fg-btn.primary { background: var(--fg-primary); border-color: var(--fg-primary); color: #fff; }
+.fg-btn.danger { background: var(--fg-danger); border-color: var(--fg-danger); color: #fff; }
+.fg-btn.success { background: var(--fg-accent); border-color: var(--fg-accent); color: #06261d; }
+.fg-btn.ghost { background: transparent; }
+.fg-btn.row { display: flex; }
+.fg-btn-row { display: flex; gap: 10px; }
+.fg-btn-row .fg-btn { margin-top: 10px; }
+.fg-basemap-row { display: flex; gap: 8px; margin-top: 6px; }
+.fg-basemap-row .fg-btn { flex: 1; margin-top: 0; font-size: 13px; padding: 10px 6px; }
+
+/* ---------------------------- Cards / lists ---------------------------- */
+.fg-card {
+  background: var(--fg-bg-card);
+  border: 1px solid var(--fg-border);
+  border-radius: var(--fg-radius);
+  padding: 14px;
+  margin-bottom: 10px;
+}
+.fg-card h3 { margin: 0 0 4px; font-size: 15.5px; }
+.fg-card .fg-card-meta { font-size: 12.5px; color: var(--fg-text-dim); }
+.fg-list-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 4px;
+  border-bottom: 1px solid var(--fg-border);
+}
+.fg-list-item:last-child { border-bottom: none; }
+.fg-list-item .fg-list-icon { font-size: 20px; width: 30px; text-align: center; flex-shrink: 0; }
+.fg-list-item .fg-list-main { flex: 1; min-width: 0; }
+.fg-list-item .fg-list-title { font-weight: 600; font-size: 14.5px; }
+.fg-list-item .fg-list-sub { font-size: 12px; color: var(--fg-text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.fg-coord-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 10px 0; }
+.fg-coord-box { background: var(--fg-bg-card); border-radius: var(--fg-radius-sm); padding: 10px 12px; }
+.fg-coord-box .k { font-size: 11px; color: var(--fg-text-dim); text-transform: uppercase; letter-spacing: 0.4px; }
+.fg-coord-box .v { font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; margin-top: 2px; }
+
+.fg-switch-row { display: flex; align-items: center; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid var(--fg-border); }
+.fg-switch-row:last-child { border-bottom: none; }
+.fg-switch { position: relative; width: 44px; height: 26px; background: var(--fg-border); border-radius: 999px; flex-shrink: 0; }
+.fg-switch::after { content:''; position:absolute; top:3px; left:3px; width:20px; height:20px; background:#fff; border-radius:50%; transition: transform .15s; }
+.fg-switch.on { background: var(--fg-primary); }
+.fg-switch.on::after { transform: translateX(18px); }
+
+.fg-toast {
+  position: absolute;
+  left: 50%;
+  bottom: calc(96px + var(--fg-safe-bottom));
+  transform: translateX(-50%);
+  background: rgba(20,26,34,0.96);
+  border: 1px solid var(--fg-border);
+  padding: 10px 18px;
+  border-radius: 999px;
+  font-size: 13.5px;
+  z-index: 1200;
+  box-shadow: var(--fg-shadow);
+  max-width: 90%;
+  text-align: center;
+}
+
+.fg-empty { text-align: center; color: var(--fg-text-dim); padding: 30px 10px; font-size: 14px; }
+.fg-hidden { display: none !important; }
+
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-thumb { background: var(--fg-border); border-radius: 3px; }
